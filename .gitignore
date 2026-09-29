@@ -15,6 +15,12 @@ local.properties
 *.aab
 captures/
 
+# Signing secrets. Losing the keystore means you can never ship an update to an
+# already-published app, so keep a backup somewhere safe — just not in git.
+*.jks
+*.keystore
+keystore.properties
+
 # OS junk
 .DS_Store
 Thumbs.db

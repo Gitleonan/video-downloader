@@ -1,7 +1,19 @@
 import com.android.build.api.variant.impl.VariantOutputImpl
+import java.util.Properties
 
 plugins {
     id("com.android.application")
+}
+
+// Release signing credentials live in keystore.properties at the repo root,
+// which is NOT committed (see .gitignore). Loading is conditional so a fresh
+// clone without the file still configures: assembleDebug works, and
+// assembleRelease just yields an unsigned APK instead of failing the build.
+val keystorePropsFile = rootProject.file("keystore.properties")
+val keystoreProps = Properties().apply {
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.inputStream().use { load(it) }
+    }
 }
 
 android {
@@ -16,9 +28,33 @@ android {
         versionName = "2.1"
     }
 
+    signingConfigs {
+        if (keystorePropsFile.exists()) {
+            create("release") {
+                // storeFile is relative to the repo root, so the properties
+                // file stays free of machine-specific paths.
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+                // minSdk 26 only strictly needs v2, but some ROM security
+                // scanners and sideload installers still look for v1/v3.
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            // debug builds are signed with the public "Android Debug" key and
+            // get android:debuggable="true"; both read as high risk to device
+            // security scanners, so distribution builds must be release-signed.
+            if (keystorePropsFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

@@ -29,30 +29,69 @@ sdk.dir=/path/to/Android/Sdk
 
 ## 一键打包
 
-```bash
-./scripts/build.sh          # macOS / Linux / Git Bash
-scripts\build.bat           # Windows cmd
+```bat
+scripts\build.bat               :: debug 包
+scripts\build.bat release       :: 正式签名包
 ```
 
-脚本先检查 JDK 与 SDK 是否就绪,再执行 `:app:assembleDebug`,产物:
+Git Bash / Linux 下用同名的 `.sh`:
+
+```bash
+./scripts/build.sh
+./scripts/build.sh release
+```
+
+脚本会先校验 JDK、SDK(以及 release 所需的签名配置)是否就绪,再执行对应的 Gradle 任务。产物:
 
 ```
 app/build/outputs/apk/debug/Video Downloader.apk
+app/build/outputs/apk/release/Video Downloader.apk
 ```
 
-等价于手动执行 `./gradlew :app:assembleDebug`。
+等价于手动执行 `./gradlew :app:assembleDebug` / `:app:assembleRelease`。
 
-APK 是 universal 包(不含任何 native 库),arm64-v8a / armeabi-v7a / x86_64 都能装。当前使用 debug 签名,可直接安装;正式分发请自行配置 release 签名。
+APK 是 universal 包(不含任何 native 库),arm64-v8a / armeabi-v7a / x86_64 都能装。
+
+> **要给别人装就用 release 包。** debug 包由公开的 `Android Debug` 密钥签名,并且带 `android:debuggable="true"`——装到手机上时系统安全检测会提示「调试版本 / 存在风险」。release 包用自己的密钥签名,不含 debuggable。
+
+## 发布签名
+
+release 包需要一个 keystore。它**绝不会进仓库**(已在 `.gitignore` 排除),但你要自己备份好:**一旦丢失,就无法再给已发布的应用做覆盖升级。**
+
+用 JDK 自带的 `keytool` 生成:
+
+```bash
+keytool -genkeypair -v \
+  -keystore release.jks \
+  -storetype PKCS12 \
+  -alias videodownloader \
+  -keyalg RSA -keysize 2048 -validity 10000 \
+  -dname "CN=你的名字, O=Video Downloader, C=CN"
+```
+
+然后在仓库根目录建 `keystore.properties`:
+
+```properties
+storeFile=release.jks
+storePassword=生成时设置的口令
+keyAlias=videodownloader
+keyPassword=同上
+```
+
+`storeFile` 按仓库根目录解析,所以这个文件里不含任何本机绝对路径。该文件不存在时构建不会失败:`assembleDebug` 照常可用,`assembleRelease` 产出未签名包。
+
+> **换签名密钥后必须先卸载旧版本**再安装,Android 不允许跨密钥覆盖安装(本地历史记录会一并清掉)。
 
 ## 调试页面(不用装 APK)
 
 页面由 `index.html` + `css/` + `js/` + `img/` 组成,全部是相对路径引用,**必须走静态服务器**:直接 file:// 打开会断链,IndexedDB / localStorage 的行为也和真实源不一致。APK 内由 `WebViewAssetLoader` 以 https 提供同一棵目录树,所以本地这样起服务最接近真实环境。
 
-```bash
-./scripts/serve.sh          # 默认 http://localhost:8123
-./scripts/serve.sh 9000     # 指定端口
-scripts\serve.bat           # Windows
+```bat
+scripts\serve.bat           :: 默认 http://localhost:8123
+scripts\serve.bat 9000      :: 指定端口
 ```
+
+Git Bash / Linux 下用 `./scripts/serve.sh [端口]`。
 
 浏览器里没有 `AppBridge`,所以下载会走回退路径(没有真实进度),剪贴板走 `navigator.clipboard`。**要验原生能力——真实下载进度、底部任务条、剪贴板桥、系统栏适配——必须把 APK 装到真机。**
 

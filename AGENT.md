@@ -62,6 +62,9 @@ cp -r <upstream>/css <upstream>/js <upstream>/img app/src/main/assets/
 - `local.properties` 不入库(被 .gitignore 排除),新机器自建 `sdk.dir=...`。
 - APK 是 universal 包(无 native 库),ARM 全系可装;`applicationId` 固定 `com.galaxy.downloader`(覆盖升级旧版),改包名等于放弃升级兼容,需用户明确要求才能改。
 - 版本号在 `app/build.gradle.kts` 的 `versionCode / versionName`,对外交付前递增。
+- **对外交付一律用 release 包**(`./scripts/build.sh release`)。debug 包由公开的 `Android Debug` 密钥签名、且合并清单里带 `android:debuggable="true"`,设备安全检测会直接判「调试版本 / 存在风险」。
+- release 签名读仓库根的 `keystore.properties`(**不入库**),其中 `storeFile` 相对仓库根解析;该文件缺失时 release 产出未签名包,而不是让构建失败(保证新克隆仍可 `assembleDebug`)。**keystore 丢失 = 无法再给已发布应用做覆盖升级**,别放进仓库,也别把口令写进任何受版本控制的文件。
+- 换签名密钥后必须先卸载旧版本才能安装,Android 不允许跨密钥覆盖安装。
 
 ## 调试手段
 

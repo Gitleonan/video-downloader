@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# One-shot debug build.
+# One-shot build.
 #
-#   ./scripts/build.sh
+#   ./scripts/build.sh            # debug   -> app/build/outputs/apk/debug/Video Downloader.apk
+#   ./scripts/build.sh release    # release -> app/build/outputs/apk/release/Video Downloader.apk
 #
-# Produces a universal, debug-signed APK:
-#   app/build/outputs/apk/debug/Video Downloader.apk
+# The debug variant is signed with the public Android debug key and carries
+# android:debuggable="true", which device security scanners flag as high risk.
+# Use `release` for anything you hand to other people.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+VARIANT="${1:-debug}"
+case "$VARIANT" in
+  debug|release) ;;
+  *) echo "error: unknown variant '$VARIANT' (expected debug or release)." >&2; exit 1 ;;
+esac
 
 if [ -z "${JAVA_HOME:-}" ] && ! command -v java >/dev/null 2>&1; then
   echo "error: no JDK found. Install JDK 17 and set JAVA_HOME (or put java on PATH)." >&2
@@ -21,9 +29,15 @@ if [ ! -f local.properties ] \
   exit 1
 fi
 
-./gradlew :app:assembleDebug
+if [ "$VARIANT" = "release" ] && [ ! -f keystore.properties ]; then
+  echo "error: a release build needs signing credentials." >&2
+  echo "       Create keystore.properties at the repo root — see README." >&2
+  exit 1
+fi
 
-APK="app/build/outputs/apk/debug/Video Downloader.apk"
+./gradlew ":app:assemble${VARIANT^}"
+
+APK="app/build/outputs/apk/${VARIANT}/Video Downloader.apk"
 echo
 echo "built: $APK"
 ls -lh "$APK"
