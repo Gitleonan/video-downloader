@@ -49,7 +49,9 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
 
@@ -68,6 +70,10 @@ public class MainActivity extends AppCompatActivity {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Map<Long, String> activeDownloads = new HashMap<>();
     private final Map<String, ByteTask> activeByteTasks = new HashMap<>();
+    /** Download rows that must complete with a toast instead of the
+     * 「打开查看」 dialog — image notes download N files at once and stacked
+     * dialogs bury the user (real-device feedback). Keyed by row id. */
+    private final Set<Long> toastOnlyDownloads = new HashSet<>();
     private Timer downloadTimer;
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -261,6 +267,11 @@ public class MainActivity extends AppCompatActivity {
                     DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
             DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
             long id = dm.enqueue(req);
+            // 图片完成只弹 toast:图文批量下载会连环弹「打开查看」对话框
+            // (真机反馈),静图落相册,toast 报个名字就够。
+            if (extMime != null && extMime.startsWith("image/")) {
+                synchronized (toastOnlyDownloads) { toastOnlyDownloads.add(id); }
+            }
             android.util.Log.d("GalaxyDL", "enqueued id=" + id + " url=" + url);
             Toast.makeText(this, getString(R.string.download_started) + name,
                     Toast.LENGTH_SHORT).show();
@@ -418,9 +429,12 @@ public class MainActivity extends AppCompatActivity {
          * MediaStore writes don't exist below, and raw public-storage writes
          * would need WRITE_EXTERNAL_STORAGE; there the two files are queued
          * as ordinary DownloadManager jobs instead. Progress events are
-         * keyed by the still url (the page registers that row). */
+         * keyed by the still url (the page registers that row). backupVideoUrl
+         * is the unsigned long-lived stream: tried automatically when the
+         * signed masterUrl fetch fails. */
         @JavascriptInterface
-        public void saveLivePhoto(String stillUrl, String videoUrl, String baseName) {
+        public void saveLivePhoto(String stillUrl, String videoUrl,
+                                  String backupVideoUrl, String baseName) {
             if (!"appassets.androidplatform.net".equals(currentPageHost)) return;
             if (stillUrl == null || stillUrl.isEmpty()
                     || videoUrl == null || videoUrl.isEmpty()) return;
@@ -431,7 +445,8 @@ public class MainActivity extends AppCompatActivity {
             name = name.replace("#", " ").trim();
             if (name.isEmpty()) name = "live";
             final String fStill = stillUrl, fVideo = videoUrl, fName = name;
-            mainHandler.post(() -> startLivePhotoTask(fStill, fVideo, fName));
+            final String fBackup = backupVideoUrl == null ? "" : backupVideoUrl;
+            mainHandler.post(() -> startLivePhotoTask(fStill, fVideo, fBackup, fName));
         }
 
         /** Task-bar cancel / pause: kill the DownloadManager row. Pause is
@@ -555,21 +570,30 @@ public class MainActivity extends AppCompatActivity {
         volatile HttpURLConnection conn;
     }
 
-    private void startLivePhotoTask(String stillUrl, String videoUrl, String baseName) {
+    private void startLivePhotoTask(String stillUrl, String videoUrl,
+                                    String backupUrl, String baseName) {
         if (Build.VERSION.SDK_INT < 29) {
             // MediaStore RELATIVE_PATH writes (the only public-storage write
             // path here) start at API 29; below that, save the two files as
             // ordinary DownloadManager jobs — the still row keyed by stillUrl
             // is what the page's task bar registered.
             long id1 = enqueueDownload(stillUrl, null, null, "image/jpeg", baseName + ".jpg");
-            if (id1 >= 0) { trackDownload(id1, stillUrl); notifyPage("start", stillUrl, 0, 0); }
+            if (id1 >= 0) {
+                synchronized (toastOnlyDownloads) { toastOnlyDownloads.add(id1); }
+                trackDownload(id1, stillUrl);
+                notifyPage("start", stillUrl, 0, 0);
+            }
             long id2 = enqueueDownload(videoUrl, null, null, "video/mp4", baseName + ".mp4");
-            if (id2 >= 0) trackDownload(id2, videoUrl);
+            if (id2 >= 0) {
+                synchronized (toastOnlyDownloads) { toastOnlyDownloads.add(id2); }
+                trackDownload(id2, videoUrl);
+            }
             return;
         }
         final ByteTask task = new ByteTask();
         Thread worker = new Thread(
-                () -> runLivePhotoTask(task, stillUrl, videoUrl, baseName), "live-photo");
+                () -> runLivePhotoTask(task, stillUrl, videoUrl, backupUrl, baseName),
+                "live-photo");
         synchronized (activeByteTasks) { activeByteTasks.put(stillUrl, task); }
         notifyPage("start", stillUrl, 0, 0);
         worker.start();
@@ -578,16 +602,29 @@ public class MainActivity extends AppCompatActivity {
     /** Byte-fetch still + mp4, compose a MicroVideo motion photo, store it
      * via MediaStore. Any failure that keeps composition impossible but
      * leaves both payloads in hand falls back to saving the two files as-is
-     * (the page's 兜底 contract); transport errors fail the task. */
+     * (the page's 兜底 contract); transport errors fail the task with the
+     * reason in the toast. The video is fetched from the signed masterUrl
+     * first and retried once from the unsigned backupUrl on failure. */
     private void runLivePhotoTask(ByteTask task, String stillUrl, String videoUrl,
-                                  String baseName) {
+                                  String backupUrl, String baseName) {
         try {
             byte[] still = httpGetBytes(task, stillUrl, stillUrl, 0, 32 * 1024 * 1024);
             if (task.cancelled) return;
             // Once the video's Content-Length is known the task bar switches
             // from the indeterminate sweep to a percent over the combined size.
-            byte[] video = httpGetBytes(task, videoUrl, videoUrl,
-                    still.length, 96 * 1024 * 1024);
+            byte[] video;
+            try {
+                video = httpGetBytes(task, videoUrl, videoUrl,
+                        still.length, 96 * 1024 * 1024);
+            } catch (Exception e) {
+                if (task.cancelled) return;
+                android.util.Log.d("GalaxyDL", "master video failed, trying backup: " + e);
+                if (backupUrl == null || backupUrl.isEmpty()) {
+                    throw new IOException("取视频失败：" + failReason(e));
+                }
+                video = httpGetBytes(task, backupUrl, videoUrl,
+                        still.length, 96 * 1024 * 1024);
+            }
             if (task.cancelled) return;
 
             byte[] jpg = still;
@@ -610,36 +647,40 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
 
-            Uri saved = mediaStoreSave(
+            mediaStoreSave(
                     MediaStore.Images.Media.getContentUri(
                             MediaStore.VOLUME_EXTERNAL_PRIMARY),
                     Environment.DIRECTORY_PICTURES + "/Video Downloader",
                     "image/jpeg", baseName + ".jpg",
                     MotionPhoto.compose(jpg, video));
             if (task.cancelled) return;
-            final Uri fSaved = saved;
+            final String okName = baseName + ".jpg";
             mainHandler.post(() -> {
                 notifyPage("done", stillUrl, 1, 1);
-                new AlertDialog.Builder(MainActivity.this)
-                        .setTitle(R.string.saved_title)
-                        .setMessage(getString(R.string.saved_message, baseName + ".jpg"))
-                        .setPositiveButton(R.string.open_action,
-                                (d, w) -> openSavedUri(fSaved, "image/jpeg"))
-                        .setNegativeButton(R.string.close_action, null)
-                        .show();
+                // Plain toast, not the「打开查看」dialog: image notes download
+                // several files back to back and stacked dialogs are unusable
+                // (same contract as still-image DownloadManager rows).
+                Toast.makeText(MainActivity.this,
+                        getString(R.string.saved_toast, okName), Toast.LENGTH_SHORT).show();
             });
         } catch (Exception e) {
             android.util.Log.d("GalaxyDL", "live photo failed: " + e);
             if (!task.cancelled) {
+                final String reason = failReason(e);
                 mainHandler.post(() -> {
                     notifyPage("done", stillUrl, 0, 1);
                     Toast.makeText(MainActivity.this,
-                            R.string.download_failed, Toast.LENGTH_LONG).show();
+                            getString(R.string.live_save_failed, reason),
+                            Toast.LENGTH_LONG).show();
                 });
             }
         } finally {
             synchronized (activeByteTasks) { activeByteTasks.remove(stillUrl); }
         }
+    }
+
+    private static String failReason(Exception e) {
+        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
     }
 
     /** Compose-fallback on 29+: still (sniffed type) + mp4 as two separate
@@ -673,7 +714,8 @@ public class MainActivity extends AppCompatActivity {
         mainHandler.post(() -> {
             notifyPage("done", keyUrl, ok ? 1 : 0, 1);
             Toast.makeText(MainActivity.this,
-                    ok ? R.string.live_fallback_saved : R.string.download_failed,
+                    getString(ok ? R.string.live_fallback_saved
+                            : R.string.live_save_failed, "无法写入相册"),
                     Toast.LENGTH_LONG).show();
         });
     }
@@ -721,21 +763,6 @@ public class MainActivity extends AppCompatActivity {
         if ("image/webp".equals(mime)) return ".webp";
         if ("image/png".equals(mime)) return ".png";
         return "";
-    }
-
-    /** Opens a saved media-store entry. The content:// URI is our own row,
-     * so a read grant is cross-app-safe (no file:// in intents, rule 9). */
-    private void openSavedUri(Uri uri, String mime) {
-        try {
-            Intent intent = new Intent(Intent.ACTION_VIEW);
-            intent.setDataAndType(uri, mime);
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
-                    | Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(intent);
-        } catch (Exception e) {
-            android.util.Log.d("GalaxyDL", "open saved failed: " + e);
-            Toast.makeText(this, "没有找到可以打开该图片的应用", Toast.LENGTH_SHORT).show();
-        }
     }
 
     /** GET with a manual redirect loop — HttpURLConnection refuses
@@ -921,9 +948,17 @@ public class MainActivity extends AppCompatActivity {
 
     private void finishDownload(long id, String url, boolean ok, int failMsgRes) {
         synchronized (activeDownloads) { activeDownloads.remove(id); }
+        final boolean toastOnly;
+        synchronized (toastOnlyDownloads) { toastOnly = toastOnlyDownloads.remove(id); }
         mainHandler.post(() -> {
             notifyPage("done", url, ok ? 1 : 0, 1);
-            if (ok) {
+            if (ok && toastOnly) {
+                // Images: plain toast with the file name. The「打开查看」
+                // dialog per file is unusable when an image note downloads
+                // N files back to back (real-device feedback).
+                Toast.makeText(this, getString(R.string.saved_toast,
+                        downloadTitle(id, url)), Toast.LENGTH_SHORT).show();
+            } else if (ok) {
                 showOpenDialog(id, url);
             } else {
                 Toast.makeText(MainActivity.this,
@@ -931,6 +966,27 @@ public class MainActivity extends AppCompatActivity {
                         Toast.LENGTH_LONG).show();
             }
         });
+    }
+
+    /** Display name of a completed row for the toast: COLUMN_TITLE (what we
+     * enqueued), falling back to a guessed name when the row is gone. */
+    private String downloadTitle(long id, String url) {
+        DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+        Cursor c = null;
+        try {
+            if (dm != null) {
+                c = dm.query(new DownloadManager.Query().setFilterById(id));
+                if (c != null && c.moveToFirst()) {
+                    String name = c.getString(c.getColumnIndexOrThrow(
+                            DownloadManager.COLUMN_TITLE));
+                    if (name != null && !name.isEmpty()) return name;
+                }
+            }
+        } catch (Exception ignore) {
+        } finally {
+            if (c != null) c.close();
+        }
+        return URLUtil.guessFileName(url, null, null);
     }
 
     private void notifyPage(String event, String url, long a, long b) {

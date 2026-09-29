@@ -290,10 +290,11 @@
       if (dlTasks[it.still]) { App.showToast('该图已在下载列表'); return; }
       if (window.AppBridge && typeof AppBridge.saveLivePhoto === 'function') {
         // 原生合成 MicroVideo 动态照片(单文件 .jpg);进度事件按静帧
-        // 地址回报,任务行先在这里注册。
+        // 地址回报,任务行先在这里注册。第 3 参是备用视频地址(masterUrl
+        // 带签名会过期,原生失败时自动换 backup 重试)。
         dlTasks[it.still] = { name: base + '.jpg', state: 'running', cur: 0, total: -1 };
         renderTasks();
-        AppBridge.saveLivePhoto(it.still, it.liveVideo, base);
+        AppBridge.saveLivePhoto(it.still, it.liveVideo, it.liveVideoBackup || '', base);
         App.showToast('已开始下载实况图 ' + (index + 1));
         App.showDlHint();
         App.markDownloaded(App.currentHistoryId, 'image');

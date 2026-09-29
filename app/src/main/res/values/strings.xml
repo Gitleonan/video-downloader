@@ -8,4 +8,6 @@
     <string name="open_action">打开查看</string>
     <string name="close_action">知道了</string>
     <string name="live_fallback_saved">实况图无法合成动态照片，已按 图片+视频 两个文件保存</string>
+    <string name="saved_toast">已保存：%s</string>
+    <string name="live_save_failed">实况图保存失败：%s</string>
 </resources>

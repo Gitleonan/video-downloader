@@ -117,7 +117,7 @@
     const urlRe = /(https?:\/\/[^\s<>"'）)】」』]+)/i;
     const m = text.match(urlRe);
     if (m) return m[1].replace(/[.,;:!?，。；：！？]+$/, '');
-    const bareRe = /\b((?:v\.)?douyin\.com\/[^\s]+|www\.douyin\.com\/[^\s]+|xiaohongshu\.com\/[^\s]+|xhslink\.com\/[^\s]+|b23\.tv\/[^\s]+|www\.bilibili\.com\/[^\s]+|bilibili\.com\/[^\s]+)/i;
+    const bareRe = /\b((?:v\.)?douyin\.com\/[^\s]+|www\.douyin\.com\/[^\s]+|xiaohongshu\.com\/[^\s]+|xhslink\.com\/[^\s]+|xhslink\.cn\/[^\s]+|b23\.tv\/[^\s]+|www\.bilibili\.com\/[^\s]+|bilibili\.com\/[^\s]+)/i;
     const b = text.match(bareRe);
     if (b) {
       const bare = b[1].replace(/[.,;:!?，。；：！？]+$/, '');
@@ -130,7 +130,8 @@
     if (!url) return null;
     const u = url.toLowerCase();
     if (u.includes('douyin.com') || u.includes('iesdouyin.com')) return 'douyin';
-    if (u.includes('xiaohongshu.com') || u.includes('xhslink.com') || u.includes('xhscdn.com')) return 'xiaohongshu';
+    if (u.includes('xiaohongshu.com') || u.includes('xhslink.com') || u.includes('xhslink.cn')
+      || u.includes('xhscdn.com')) return 'xiaohongshu';
     if (u.includes('bilibili.com') || u.includes('b23.tv') || u.includes('bili')) return 'bilibili';
     return 'other';
   }
@@ -456,6 +457,43 @@
     }).filter(Boolean).filter(function (x) { return !!x.src; });
   }
 
+  /* __INITIAL_STATE__ 是 JS 对象字面量而非纯 JSON:实测含裸 undefined
+     (如 "jsAssetsList":undefined),JSON.parse 会直接抛异常 —— 真机实测
+     这是实况数据整份丢失的根因(表现:图文正常、实况永远拿不到)。先做
+     字符串感知消毒:只把字符串字面量之外的 undefined / NaN / ±Infinity
+     换成 null,再 JSON.parse。字符串内的这些词不动。 */
+  function jsonishParse(literal) {
+    let out = '';
+    let inStr = false, esc = false, quote = '';
+    const idents = /[A-Za-z0-9_$]/;
+    for (let i = 0; i < literal.length; i++) {
+      const ch = literal[i];
+      if (inStr) {
+        out += ch;
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === quote) inStr = false;
+        continue;
+      }
+      if (ch === '"' || ch === "'") { inStr = true; quote = ch; out += ch; continue; }
+      let hit = null;
+      if (literal.startsWith('undefined', i)) hit = 'undefined';
+      else if (literal.startsWith('-Infinity', i)) hit = '-Infinity';
+      else if (literal.startsWith('Infinity', i)) hit = 'Infinity';
+      else if (literal.startsWith('NaN', i)) hit = 'NaN';
+      if (hit) {
+        const nxt = i + hit.length;
+        // 长标识符的一部分(如 undefinedFoo)不是裸字面量,原样放行
+        if (nxt < literal.length && idents.test(literal[nxt])) { out += ch; continue; }
+        out += 'null';
+        i += hit.length - 1;
+        continue;
+      }
+      out += ch;
+    }
+    try { return JSON.parse(out); } catch (_) { return null; }
+  }
+
   /* 从笔记页 HTML 提取 __INITIAL_STATE__。它是 `window.__INITIAL_STATE__ =
      {…}` 形态的对象字面量,字符串里可能含花括号,所以从第一个 { 起做
      字符串感知的配平扫描,取到平衡为止再 JSON.parse。 */
@@ -478,7 +516,7 @@
       else if (ch === '}') {
         depth--;
         if (depth === 0) {
-          try { return JSON.parse(html.slice(openAt, i + 1)); } catch (_) { return null; }
+          return jsonishParse(html.slice(openAt, i + 1));
         }
       }
     }
@@ -515,11 +553,13 @@
       const stream = it.stream || {};
       const h264 = Array.isArray(stream.h264) ? stream.h264 : [];
       const v0 = h264[0] || {};
+      const master = (typeof v0.masterUrl === 'string' && v0.masterUrl) || '';
+      const backup = (Array.isArray(v0.backupUrls) && typeof v0.backupUrls[0] === 'string'
+        && v0.backupUrls[0]) || '';
       return {
         still: typeof it.url === 'string' ? it.url : '',
-        liveVideo: (typeof v0.masterUrl === 'string' && v0.masterUrl)
-          || (Array.isArray(v0.backupUrls) && typeof v0.backupUrls[0] === 'string'
-            ? v0.backupUrls[0] : ''),
+        liveVideo: master || backup,
+        liveVideoBackup: master ? backup : '',
         isLive: !!it.livePhoto
       };
     });
@@ -563,12 +603,13 @@
           still: n.still,
           live: n.isLive,
           liveVideo: n.liveVideo,
+          liveVideoBackup: n.liveVideoBackup || '',
           fromNote: true
         };
       });
     }
     return (apiImgs || []).map(function (a) {
-      return { display: a.src, still: a.dl || a.src, live: false, liveVideo: '', fromNote: false };
+      return { display: a.src, still: a.dl || a.src, live: false, liveVideo: '', liveVideoBackup: '', fromNote: false };
     });
   }
 
