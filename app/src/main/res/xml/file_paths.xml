@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Completed downloads live under the public external storage
+     (Movies/Music/Download subdirs), so one external-path root covers all. -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-path name="external_files" path="." />
+</paths>

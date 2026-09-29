@@ -1,0 +1,5 @@
+# Shell scripts must keep LF: a CRLF shebang breaks them on macOS/Linux, and
+# Windows checkouts would otherwise rewrite them via core.autocrlf.
+*.sh   text eol=lf
+gradlew text eol=lf
+*.bat  text eol=crlf

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pre-paint background for a dark-mode launch. The page picks its own theme
+     (user toggle, then system preference), so this only covers the frame before
+     the WebView paints anything; system dark is the closest available guess. -->
+<resources>
+    <color name="paper">#101214</color>
+</resources>

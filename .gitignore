@@ -1,0 +1,26 @@
+# Gradle
+.gradle/
+.kotlin/
+build/
+app/build/
+
+# IDE / tooling
+.idea/
+*.iml
+*.hprof
+local.properties
+
+# Build outputs
+*.apk
+*.aab
+captures/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Local-only: .claude/ holds editor/preview config that points at paths on this
+# machine, and .debug/ holds ad-hoc screenshots and test clips (some of them
+# personal video files). Neither belongs in the repository.
+.claude/
+.debug/

@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Video Downloader</string>
+    <string name="download_started">已开始下载:</string>
+    <string name="download_failed">下载失败，请重试</string>
+    <string name="bad_content">下载的内容不是视频文件（链接可能已过期），请重新解析后下载</string>
+    <string name="saved_title">已保存到本地</string>
+    <string name="saved_message">%s 已保存到手机，可在相册或文件管理中查看。</string>
+    <string name="open_action">打开查看</string>
+    <string name="close_action">知道了</string>
+</resources>

@@ -1,0 +1,335 @@
+<!-- AI生成 -->
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#F6F7F9" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<title>Video Downloader</title>
+<!-- 字体只用系统中文字体栈：Webfont 仅在设备联网时才解析得到，离线冷启动会
+     静默退化成 SimSun，衬线标题尤其明显。 -->
+<link rel="stylesheet" href="css/style.css">
+<!-- 系统栏避让：安卓壳内由原生把真实 inset 注入成 --safe-t / --safe-b（见 MainActivity
+     的 injectSafeInsets），页面顶栏因此能一路画到状态栏底下、内容再自己下移；注入的是内联
+     自定义属性，优先级高于 :root 里的 env()，壳内只有这一路来源。浏览器与未来 iOS 端没有
+     注入，自动回落到 env(safe-area-inset-*)，同一套 CSS 通吃。这里不要再写 UA 检测把两个
+     变量置 0：那样会和原生注入互相打架，状态栏区域就会露出壳的底色。 -->
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- App bar -->
+  <header class="appbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <!-- Logo: same launcher icon as the APK shell -->
+        <img src="img/logo.png" alt="Video Downloader">
+      </div>
+      <div>
+        <div class="brand-title">Video Downloader</div>
+        <div class="brand-sub">抖音 · 小红书 · B站</div>
+      </div>
+    </div>
+    <div class="bar-actions">
+      <button class="icon-btn" id="btn-theme" aria-label="切换日间/夜间" title="切换主题">
+        <svg id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+          <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+        </svg>
+        <svg id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+          <path d="M21 14.5A8.5 8.5 0 1 1 9.5 3a7 7 0 0 0 11.5 11.5z"/>
+        </svg>
+      </button>
+      <button class="icon-btn" id="btn-read-clip" aria-label="读取剪贴板" title="读取剪贴板">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="8" y="2" width="8" height="4" rx="1.5"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M9 12h6M9 16h4"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Pages -->
+  <main class="pages" id="pages">
+    <!-- ===== HOME ===== -->
+    <section class="page active" id="page-home">
+      <div class="hero">
+        <div class="hero-eyebrow"><span class="sep"></span>粘贴 · 解析 · 保存</div>
+        <h1>把喜欢的视频<em>留在手机里</em></h1>
+        <p>复制抖音、小红书或哔哩哔哩的分享链接，粘贴到下方即可解析下载。</p>
+      </div>
+
+      <div class="chip-row" id="chip-row">
+        <button class="chip on" data-p="all">全部</button>
+        <button class="chip" data-p="douyin">抖音</button>
+        <button class="chip" data-p="xiaohongshu">小红书</button>
+        <button class="chip" data-p="bilibili">哔哩哔哩</button>
+      </div>
+
+      <!-- Unsticky geometry reference for the dock logic -->
+      <div id="dock-sentinel" aria-hidden="true"></div>
+
+      <!-- Claude-style composer -->
+      <div class="composer" id="paste-card">
+        <div class="composer-top">
+          <div class="composer-label"><span class="live"></span>粘贴分享内容</div>
+          <div class="composer-hint">支持口令 / 链接</div>
+        </div>
+        <textarea
+          id="link-input"
+          class="link-input"
+          rows="3"
+          spellcheck="false"
+          placeholder="打开 App 复制分享链接，粘贴到这里…&#10;例如 https://v.douyin.com/xxxx"
+        ></textarea>
+
+        <div class="detected" id="detected">
+          <span class="tag" id="detected-tag">已识别</span>
+          <span class="url" id="detected-url"></span>
+        </div>
+
+        <div class="composer-bar">
+          <div class="composer-tools">
+            <button class="tool-btn" id="btn-paste">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+              剪贴板
+            </button>
+            <button class="tool-btn" id="btn-clear-input" title="清空">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              清空
+            </button>
+          </div>
+          <button class="send-btn" id="btn-parse" aria-label="解析" title="立即解析">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>
+            </svg>
+            <span>解析</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat">
+          <div class="num" id="stat-count">0<em>次</em></div>
+          <div class="lab">累计解析</div>
+        </div>
+        <div class="stat">
+          <div class="num">3<em>端</em></div>
+          <div class="lab">支持平台</div>
+        </div>
+        <div class="stat">
+          <div class="num">1080<em>P</em></div>
+          <div class="lab">高清画质</div>
+        </div>
+      </div>
+
+      <div class="sec">
+        <h2><span class="rule"></span>如何使用</h2>
+      </div>
+      <div class="steps">
+        <div class="step">
+          <div class="idx">1</div>
+          <div>
+            <div class="t">复制分享链接</div>
+            <div class="d">在抖音、小红书或 B 站点击分享，复制链接或口令。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="idx">2</div>
+          <div>
+            <div class="t">粘贴并解析</div>
+            <div class="d">回到本应用，点右侧箭头开始解析，自动识别平台。</div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="idx">3</div>
+          <div>
+            <div class="t">保存到手机</div>
+            <div class="d">预览无误后，下载视频或提取音频到本地。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sec">
+        <h2><span class="rule"></span>支持平台</h2>
+      </div>
+      <div class="plat-grid">
+        <div class="plat-card">
+          <div class="plat-icon">
+            <img src="img/douyin.ico" alt="" width="14" height="14" loading="lazy" decoding="async" aria-hidden="true">
+          </div>
+          <div class="name">抖音</div>
+        </div>
+        <div class="plat-card">
+          <div class="plat-icon">
+            <img src="img/xiaohongshu.svg" alt="" width="14" height="14" loading="lazy" decoding="async" aria-hidden="true">
+          </div>
+          <div class="name">小红书</div>
+        </div>
+        <div class="plat-card">
+          <div class="plat-icon">
+            <img src="img/bilibili.svg" alt="" width="14" height="14" loading="lazy" decoding="async" aria-hidden="true">
+          </div>
+          <div class="name">哔哩哔哩</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== HISTORY ===== -->
+    <section class="page" id="page-history">
+      <div class="hero" style="padding-bottom:4px">
+        <div class="hero-eyebrow"><span class="sep"></span>Local records</div>
+        <h1>下载记录</h1>
+        <p>解析与下载历史保存在本机，不会上传。</p>
+      </div>
+      <div class="sec">
+        <h2><span class="rule"></span>最近</h2>
+        <span class="more-group">
+          <button class="more" id="btn-open-dir">打开目录</button>
+          <button class="more danger" id="btn-clear-hist">清空</button>
+        </span>
+      </div>
+      <div class="hist-list" id="hist-list"></div>
+    </section>
+
+    <!-- ===== ME ===== -->
+    <section class="page" id="page-me">
+      <div class="hero" style="padding-bottom:4px">
+        <div class="hero-eyebrow"><span class="sep"></span>Preferences</div>
+        <h1>我的</h1>
+        <p>外观与本地数据管理。</p>
+      </div>
+
+      <div class="sec"><h2><span class="rule"></span>外观</h2></div>
+      <div class="set-group">
+        <div class="set-row" id="row-theme">
+          <div class="si">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </div>
+          <div class="st">
+            <div class="n">日间 / 夜间模式</div>
+            <div class="d" id="theme-label">当前：日间</div>
+          </div>
+          <div class="switch on" id="sw-theme"></div>
+        </div>
+      </div>
+
+      <div class="sec"><h2><span class="rule"></span>关于</h2></div>
+      <div class="set-group">
+        <div class="set-row" id="row-clear">
+          <div class="si">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 12h10l1-12"/><path d="M10 11v5M14 11v5"/></svg>
+          </div>
+          <div class="st">
+            <div class="n">清除本地数据</div>
+            <div class="d">历史记录与偏好设置</div>
+          </div>
+          <div class="chev">›</div>
+        </div>
+      </div>
+
+      <div class="about-card">
+        <div class="logo">
+          <img src="img/logo.png" alt="Video Downloader">
+        </div>
+        <h3>Video Downloader</h3>
+        <div class="ver">v2.1</div>
+        <p>支持抖音、小红书、哔哩哔哩链接识别与媒体下载。仅供个人学习与备份用途，请尊重原作者版权。</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Bottom nav -->
+  <nav class="tabbar" id="tabbar">
+    <button class="tab active" data-page="home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 10.5L12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5z"/>
+      </svg>
+      <span>下载</span>
+    </button>
+    <button class="tab" data-page="history">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 1.8"/>
+      </svg>
+      <span>历史</span>
+      <span class="badge" id="tab-badge">0</span>
+    </button>
+    <button class="tab" data-page="me">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c1.4-3.4 4-5 7-5s5.6 1.6 7 5"/>
+      </svg>
+      <span>我的</span>
+    </button>
+  </nav>
+</div>
+
+<!-- Overlay + Result sheet -->
+<div class="overlay" id="overlay"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="解析结果">
+  <div class="sheet-handle"></div>
+  <div class="sheet-body">
+    <div class="parse-loading" id="parse-loading">
+      <div class="spinner"></div>
+      <div class="txt" id="parse-loading-txt">正在解析链接…</div>
+    </div>
+
+    <div id="result-view" style="display:none">
+      <div class="result-head">
+        <h3><span class="ok">✓</span>解析成功</h3>
+        <button class="icon-btn" id="btn-close-sheet" aria-label="关闭" style="width:34px;height:34px;border-radius:10px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+
+      <div class="preview-wrap" id="preview-wrap" role="button" tabindex="0" aria-label="点击预览视频">
+        <img id="result-cover" alt="" referrerpolicy="no-referrer" />
+        <div class="play-overlay" id="play-overlay">
+          <div class="play-circle">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5L8 5.5z"/></svg>
+          </div>
+        </div>
+        <div class="preview-hint show" id="preview-hint">点击预览视频</div>
+      </div>
+
+      <div class="result-title" id="result-title"></div>
+      <div class="result-meta" id="result-meta"></div>
+
+      <div class="dl-actions">
+        <div class="dl-row" id="dl-row">
+          <button class="dl-btn video" id="btn-dl-video">
+            <div class="prog" id="prog-video"></div>
+            <span class="label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg>
+              下载视频
+            </span>
+          </button>
+          <button class="dl-btn audio" id="btn-dl-audio">
+            <div class="prog" id="prog-audio"></div>
+            <span class="label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V7l10-2v11"/><circle cx="7" cy="18" r="2.2"/><circle cx="17" cy="16" r="2.2"/></svg>
+              提取音频
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <div class="notice" id="result-notice">
+        点击下载后将调用系统下载器保存到手机。部分平台链接有时效，请尽快下载。
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">
+  <div class="t-ico">✓</div>
+  <div id="toast-msg">已复制</div>
+</div>
+
+<!-- Persistent background-download task bar (native shell only) -->
+<div class="taskbar" id="taskbar"></div>
+
+<script src="js/shared.js"></script>
+<script src="js/download.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
