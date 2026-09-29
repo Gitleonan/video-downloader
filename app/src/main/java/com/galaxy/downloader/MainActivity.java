@@ -4,10 +4,12 @@ import android.annotation.SuppressLint;
 import android.app.DownloadManager;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
@@ -16,6 +18,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.provider.MediaStore;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
@@ -39,6 +42,12 @@ import androidx.core.view.WindowInsetsCompat;
 import androidx.webkit.WebViewAssetLoader;
 import androidx.webkit.WebViewClientCompat;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Timer;
@@ -58,6 +67,7 @@ public class MainActivity extends AppCompatActivity {
     private volatile String currentPageHost = "";
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final Map<Long, String> activeDownloads = new HashMap<>();
+    private final Map<String, ByteTask> activeByteTasks = new HashMap<>();
     private Timer downloadTimer;
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -231,11 +241,11 @@ public class MainActivity extends AppCompatActivity {
             }
             req.setTitle(name);
             req.setDescription("Video Downloader");
-            // Videos go to Movies, audio to Music: media collections every
-            // gallery app scans, so the file shows up in 系统相册 directly.
-            // Generic files stay in Downloads. MimeTypeMap's extension parser
-            // returns "" for non-ASCII names (all Chinese titles), so slice
-            // the extension off directly.
+            // Videos go to Movies, audio to Music, images to Pictures: media
+            // collections every gallery app scans, so the file shows up in
+            // 系统相册 directly. Generic files stay in Downloads. MimeTypeMap's
+            // extension parser returns "" for non-ASCII names (all Chinese
+            // titles), so slice the extension off directly.
             String ext = extensionOf(name);
             String extMime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext);
             String dir = Environment.DIRECTORY_DOWNLOADS;
@@ -243,6 +253,8 @@ public class MainActivity extends AppCompatActivity {
                 dir = Environment.DIRECTORY_MOVIES;
             } else if (extMime != null && extMime.startsWith("audio/")) {
                 dir = Environment.DIRECTORY_MUSIC;
+            } else if (extMime != null && extMime.startsWith("image/")) {
+                dir = Environment.DIRECTORY_PICTURES;
             }
             req.setDestinationInExternalPublicDir(dir, "Video Downloader/" + name);
             req.setNotificationVisibility(
@@ -356,15 +368,91 @@ public class MainActivity extends AppCompatActivity {
             });
         }
 
+        /** Async fetch of a note page (小红书图文). The page API only serves
+         * re-encoded webp stills with live photos flattened, so the page
+         * fetches the real note HTML — which carries original JPEG urls and
+         * the live-photo mp4 — through here. The callback lands as
+         * window.__nativeNote({ok, html|error}); the browser preview has no
+         * bridge and simply stays on the API path. The UA must be mobile
+         * (desktop UA gets a stripped shell without __INITIAL_STATE__) and no
+         * cookies are injected: anonymous fetch verified working. */
+        @JavascriptInterface
+        public void fetchNoteHtml(String url) {
+            if (!"appassets.androidplatform.net".equals(currentPageHost)) return;
+            if (url == null || url.isEmpty()) return;
+            final String fUrl = url;
+            mainHandler.post(() -> {
+                // WebView's own UA on a device is a mobile Chrome UA. Cache
+                // it here on the UI thread; getSettings() isn't thread-safe.
+                final String ua = webView != null
+                        ? webView.getSettings().getUserAgentString() : null;
+                new Thread(() -> {
+                    String payload;
+                    try {
+                        String html = httpGetString(fUrl, ua);
+                        org.json.JSONObject o = new org.json.JSONObject();
+                        o.put("ok", html != null);
+                        if (html != null) o.put("html", html);
+                        else o.put("error", "fetch failed or empty body");
+                        payload = o.toString();
+                    } catch (Exception e) {
+                        try {
+                            payload = new org.json.JSONObject()
+                                    .put("ok", false)
+                                    .put("error", String.valueOf(e)).toString();
+                        } catch (Exception ignore) {
+                            payload = "{\"ok\":false,\"error\":\"fetch failed\"}";
+                        }
+                    }
+                    final String js = "window.__nativeNote && __nativeNote(" + payload + ")";
+                    mainHandler.post(() -> {
+                        if (webView != null) webView.evaluateJavascript(js, null);
+                    });
+                }, "note-fetch").start();
+            });
+        }
+
+        /** Live-photo download: byte-fetch the still + mp4 and compose a
+         * Google Motion Photo (MicroVideo V1) saved as one .jpg in
+         * Pictures/Video Downloader. Only on API 29+ — RELATIVE_PATH-based
+         * MediaStore writes don't exist below, and raw public-storage writes
+         * would need WRITE_EXTERNAL_STORAGE; there the two files are queued
+         * as ordinary DownloadManager jobs instead. Progress events are
+         * keyed by the still url (the page registers that row). */
+        @JavascriptInterface
+        public void saveLivePhoto(String stillUrl, String videoUrl, String baseName) {
+            if (!"appassets.androidplatform.net".equals(currentPageHost)) return;
+            if (stillUrl == null || stillUrl.isEmpty()
+                    || videoUrl == null || videoUrl.isEmpty()) return;
+            String name = baseName == null || baseName.trim().isEmpty()
+                    ? "live" : baseName.trim();
+            // '#' truncates DownloadManager destination paths (rule 14);
+            // byte-saved names keep the same contract as a guard.
+            name = name.replace("#", " ").trim();
+            if (name.isEmpty()) name = "live";
+            final String fStill = stillUrl, fVideo = videoUrl, fName = name;
+            mainHandler.post(() -> startLivePhotoTask(fStill, fVideo, fName));
+        }
+
         /** Task-bar cancel / pause: kill the DownloadManager row. Pause is
          * page-level state (DownloadManager has no public pause), resume
-         * re-enqueues via download(). */
+         * re-enqueues via download(). Byte-level tasks (live photos) are
+         * cancelled by flag + connection disconnect. */
         @JavascriptInterface
         public void cancelDownload(String url) {
             if (!"appassets.androidplatform.net".equals(currentPageHost)) return;
             if (url == null || url.isEmpty()) return;
             final String fUrl = url;
             mainHandler.post(() -> {
+                final ByteTask bt;
+                synchronized (activeByteTasks) { bt = activeByteTasks.get(fUrl); }
+                if (bt != null) {
+                    bt.cancelled = true;
+                    HttpURLConnection c = bt.conn;
+                    if (c != null) {
+                        try { c.disconnect(); } catch (Exception ignore) {}
+                    }
+                }
                 long found = -1;
                 synchronized (activeDownloads) {
                     for (Map.Entry<Long, String> e : activeDownloads.entrySet()) {
@@ -456,6 +544,279 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             android.util.Log.d("GalaxyDL", "open dir " + docId + " failed: " + e);
             return false;
+        }
+    }
+
+    /** One in-flight byte-level download (live-photo composition). Cancel
+     * works by flag checked between reads plus disconnecting the current
+     * connection — HttpURLConnection reads don't respond to interrupt(). */
+    private static final class ByteTask {
+        volatile boolean cancelled;
+        volatile HttpURLConnection conn;
+    }
+
+    private void startLivePhotoTask(String stillUrl, String videoUrl, String baseName) {
+        if (Build.VERSION.SDK_INT < 29) {
+            // MediaStore RELATIVE_PATH writes (the only public-storage write
+            // path here) start at API 29; below that, save the two files as
+            // ordinary DownloadManager jobs — the still row keyed by stillUrl
+            // is what the page's task bar registered.
+            long id1 = enqueueDownload(stillUrl, null, null, "image/jpeg", baseName + ".jpg");
+            if (id1 >= 0) { trackDownload(id1, stillUrl); notifyPage("start", stillUrl, 0, 0); }
+            long id2 = enqueueDownload(videoUrl, null, null, "video/mp4", baseName + ".mp4");
+            if (id2 >= 0) trackDownload(id2, videoUrl);
+            return;
+        }
+        final ByteTask task = new ByteTask();
+        Thread worker = new Thread(
+                () -> runLivePhotoTask(task, stillUrl, videoUrl, baseName), "live-photo");
+        synchronized (activeByteTasks) { activeByteTasks.put(stillUrl, task); }
+        notifyPage("start", stillUrl, 0, 0);
+        worker.start();
+    }
+
+    /** Byte-fetch still + mp4, compose a MicroVideo motion photo, store it
+     * via MediaStore. Any failure that keeps composition impossible but
+     * leaves both payloads in hand falls back to saving the two files as-is
+     * (the page's 兜底 contract); transport errors fail the task. */
+    private void runLivePhotoTask(ByteTask task, String stillUrl, String videoUrl,
+                                  String baseName) {
+        try {
+            byte[] still = httpGetBytes(task, stillUrl, stillUrl, 0, 32 * 1024 * 1024);
+            if (task.cancelled) return;
+            // Once the video's Content-Length is known the task bar switches
+            // from the indeterminate sweep to a percent over the combined size.
+            byte[] video = httpGetBytes(task, videoUrl, videoUrl,
+                    still.length, 96 * 1024 * 1024);
+            if (task.cancelled) return;
+
+            byte[] jpg = still;
+            if (!MotionPhoto.isJpeg(jpg)) {
+                // Page-source stills are JPEG; API-proxy stills are webp.
+                // Transcode through the framework decoder so composition
+                // also works off the fallback source (no native libs).
+                Bitmap bmp = BitmapFactory.decodeByteArray(still, 0, still.length);
+                if (bmp != null) {
+                    ByteArrayOutputStream b = new ByteArrayOutputStream();
+                    bmp.compress(Bitmap.CompressFormat.JPEG, 92, b);
+                    bmp.recycle();
+                    jpg = b.toByteArray();
+                }
+            }
+            if (!MotionPhoto.isJpeg(jpg)) {
+                // Undecodable still: no motion photo possible. Payloads are
+                // in hand — write both files straight to MediaStore.
+                saveTwoFiles(task, still, video, baseName, stillUrl);
+                return;
+            }
+
+            Uri saved = mediaStoreSave(
+                    MediaStore.Images.Media.getContentUri(
+                            MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                    Environment.DIRECTORY_PICTURES + "/Video Downloader",
+                    "image/jpeg", baseName + ".jpg",
+                    MotionPhoto.compose(jpg, video));
+            if (task.cancelled) return;
+            final Uri fSaved = saved;
+            mainHandler.post(() -> {
+                notifyPage("done", stillUrl, 1, 1);
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle(R.string.saved_title)
+                        .setMessage(getString(R.string.saved_message, baseName + ".jpg"))
+                        .setPositiveButton(R.string.open_action,
+                                (d, w) -> openSavedUri(fSaved, "image/jpeg"))
+                        .setNegativeButton(R.string.close_action, null)
+                        .show();
+            });
+        } catch (Exception e) {
+            android.util.Log.d("GalaxyDL", "live photo failed: " + e);
+            if (!task.cancelled) {
+                mainHandler.post(() -> {
+                    notifyPage("done", stillUrl, 0, 1);
+                    Toast.makeText(MainActivity.this,
+                            R.string.download_failed, Toast.LENGTH_LONG).show();
+                });
+            }
+        } finally {
+            synchronized (activeByteTasks) { activeByteTasks.remove(stillUrl); }
+        }
+    }
+
+    /** Compose-fallback on 29+: still (sniffed type) + mp4 as two separate
+     * MediaStore files — the always-available 兜底 for undecodable stills. */
+    private void saveTwoFiles(ByteTask task, byte[] still, byte[] video,
+                              String baseName, String keyUrl) {
+        boolean savedAny = false;
+        String stillMime = sniffImageMime(still);
+        if (stillMime != null) {
+            try {
+                mediaStoreSave(MediaStore.Images.Media.getContentUri(
+                                MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                        Environment.DIRECTORY_PICTURES + "/Video Downloader",
+                        stillMime, baseName + extensionForMime(stillMime), still);
+                savedAny = true;
+            } catch (Exception e) {
+                android.util.Log.d("GalaxyDL", "still save failed: " + e);
+            }
+        }
+        try {
+            mediaStoreSave(MediaStore.Video.Media.getContentUri(
+                            MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                    Environment.DIRECTORY_MOVIES + "/Video Downloader",
+                    "video/mp4", baseName + ".mp4", video);
+            savedAny = true;
+        } catch (Exception e) {
+            android.util.Log.d("GalaxyDL", "video save failed: " + e);
+        }
+        if (task.cancelled) return;
+        final boolean ok = savedAny;
+        mainHandler.post(() -> {
+            notifyPage("done", keyUrl, ok ? 1 : 0, 1);
+            Toast.makeText(MainActivity.this,
+                    ok ? R.string.live_fallback_saved : R.string.download_failed,
+                    Toast.LENGTH_LONG).show();
+        });
+    }
+
+    /** Inserts bytes into the media store as a pending entry, writes them,
+     * then clears IS_PENDING. Caller must be on API 29+ (RELATIVE_PATH). */
+    private Uri mediaStoreSave(Uri collection, String relativePath, String mime,
+                               String displayName, byte[] bytes) throws IOException {
+        ContentValues v = new ContentValues();
+        v.put(MediaStore.MediaColumns.DISPLAY_NAME, displayName);
+        v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+        v.put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath);
+        v.put(MediaStore.MediaColumns.IS_PENDING, 1);
+        Uri uri = getContentResolver().insert(collection, v);
+        if (uri == null) throw new IOException("media store insert failed: " + relativePath);
+        try {
+            OutputStream os = getContentResolver().openOutputStream(uri);
+            if (os == null) throw new IOException("stream open failed: " + uri);
+            try { os.write(bytes); os.flush(); } finally { os.close(); }
+        } catch (IOException e) {
+            try { getContentResolver().delete(uri, null, null); } catch (Exception ignore) {}
+            throw e;
+        }
+        ContentValues done = new ContentValues();
+        done.put(MediaStore.MediaColumns.IS_PENDING, 0);
+        getContentResolver().update(uri, done, null, null);
+        return uri;
+    }
+
+    private static String sniffImageMime(byte[] b) {
+        if (b == null || b.length < 12) return null;
+        if ((b[0] & 0xFF) == 0xFF && (b[1] & 0xFF) == 0xD8) return "image/jpeg";
+        if (b[0] == 'R' && b[1] == 'I' && b[2] == 'F' && b[3] == 'F'
+                && b[8] == 'W' && b[9] == 'E' && b[10] == 'B' && b[11] == 'P') {
+            return "image/webp";
+        }
+        if ((b[0] & 0xFF) == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G') {
+            return "image/png";
+        }
+        return null;
+    }
+
+    private static String extensionForMime(String mime) {
+        if ("image/jpeg".equals(mime)) return ".jpg";
+        if ("image/webp".equals(mime)) return ".webp";
+        if ("image/png".equals(mime)) return ".png";
+        return "";
+    }
+
+    /** Opens a saved media-store entry. The content:// URI is our own row,
+     * so a read grant is cross-app-safe (no file:// in intents, rule 9). */
+    private void openSavedUri(Uri uri, String mime) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri, mime);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+        } catch (Exception e) {
+            android.util.Log.d("GalaxyDL", "open saved failed: " + e);
+            Toast.makeText(this, "没有找到可以打开该图片的应用", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** GET with a manual redirect loop — HttpURLConnection refuses
+     * cross-protocol hops, and xhslink share links redirect https→https plus
+     * the odd http entry point. Body capped at 4 MB (note pages ~200 KB). */
+    private static String httpGetString(String url, String userAgent) throws IOException {
+        String current = url;
+        for (int hop = 0; hop < 5 && current != null; hop++) {
+            HttpURLConnection conn = (HttpURLConnection) new URL(current).openConnection();
+            try {
+                conn.setConnectTimeout(10000);
+                conn.setReadTimeout(10000);
+                conn.setInstanceFollowRedirects(false);
+                if (userAgent != null) conn.setRequestProperty("User-Agent", userAgent);
+                int code = conn.getResponseCode();
+                if (code >= 300 && code < 400) {
+                    String loc = conn.getHeaderField("Location");
+                    current = loc == null ? null
+                            : new URL(new URL(current), loc).toString();
+                    continue;
+                }
+                if (code != 200) return null;
+                InputStream in = conn.getInputStream();
+                ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                byte[] chunk = new byte[8192];
+                int n, total = 0;
+                try {
+                    while ((n = in.read(chunk)) != -1) {
+                        total += n;
+                        if (total > 4 * 1024 * 1024) return null;
+                        buf.write(chunk, 0, n);
+                    }
+                } finally {
+                    in.close();
+                }
+                return buf.toString("UTF-8");
+            } finally {
+                conn.disconnect();
+            }
+        }
+        return null;
+    }
+
+    /** Fetches a URL fully into memory for a byte task, posting progress
+     * events keyed by {@code keyUrl}: cur = baseBytes + bytes read, total =
+     * baseBytes + Content-Length (or -1 → page keeps the indeterminate sweep).
+     * Returns null on cancellation, throws on transport / HTTP errors. */
+    private byte[] httpGetBytes(ByteTask task, String url, String keyUrl,
+                                long baseBytes, long maxBytes) throws IOException {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        task.conn = conn;
+        try {
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(15000);
+            conn.setInstanceFollowRedirects(true);
+            int code = conn.getResponseCode();
+            if (code != 200) throw new IOException("HTTP " + code);
+            if (task.cancelled) return null;
+            long cl = conn.getContentLengthLong();
+            long total = cl > 0 ? baseBytes + cl : -1;
+            InputStream in = conn.getInputStream();
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            byte[] chunk = new byte[16384];
+            long cur = baseBytes;
+            int n;
+            try {
+                while ((n = in.read(chunk)) != -1) {
+                    if (task.cancelled) return null;
+                    cur += n;
+                    if (buf.size() + n > maxBytes) throw new IOException("payload too large");
+                    buf.write(chunk, 0, n);
+                    final long fCur = cur, fTotal = total;
+                    mainHandler.post(() -> notifyPage("progress", keyUrl, fCur, fTotal));
+                }
+            } finally {
+                in.close();
+            }
+            return buf.toByteArray();
+        } finally {
+            conn.disconnect();
+            if (task.conn == conn) task.conn = null;
         }
     }
 
@@ -665,6 +1026,8 @@ public class MainActivity extends AppCompatActivity {
         if ((b[0] & 0xFF) == 0x89 && b[1] == 'P' && b[2] == 'N'
                 && b[3] == 'G') return true;                                         // png
         if (b[0] == 'G' && b[1] == 'I' && b[2] == 'F' && b[3] == '8') return true;   // gif
+        if (b[0] == 'B' && b[1] == 'M') return true;                                 // bmp
+        // avif/heic need no extra case: ISOBMFF containers, matched above by ftyp
         return false;
     }
 

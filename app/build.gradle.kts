@@ -24,8 +24,8 @@ android {
         applicationId = "com.galaxy.downloader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "2.1"
+        versionCode = 12
+        versionName = "2.2"
     }
 
     signingConfigs {
@@ -77,6 +77,7 @@ androidComponents {
 dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.webkit:webkit:1.12.1")
+    testImplementation("junit:junit:4.13.2")
 
     constraints {
         // appcompat pulls in old split kotlin-stdlib artifacts that

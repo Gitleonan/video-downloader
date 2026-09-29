@@ -291,6 +291,18 @@
         <div class="preview-hint show" id="preview-hint">点击预览视频</div>
       </div>
 
+      <!-- 图文笔记网格:与视频预览互斥显示。app.js 的 renderImageGrid 铺格子
+           (序号角标 / 实况徽标 / 逐张下载),download.js 的
+           doDownloadImage / doDownloadAllImages 接原生桥逐个入队。 -->
+      <div class="image-grid" id="image-grid" style="display:none">
+        <div class="ig-head">
+          <div class="ig-count" id="ig-count"></div>
+          <button class="ig-all" id="btn-dl-all">全部下载</button>
+        </div>
+        <div class="ig-cells" id="ig-cells"></div>
+        <div class="ig-note" id="ig-note"></div>
+      </div>
+
       <div class="result-title" id="result-title"></div>
       <div class="result-meta" id="result-meta"></div>
 

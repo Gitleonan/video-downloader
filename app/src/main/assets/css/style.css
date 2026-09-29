@@ -1041,6 +1041,89 @@ body { transition: background-color 0.25s ease; }
   font-weight: 600;
 }
 
+/* =========================
+   Image-note grid (小红书图文)
+   =========================
+   Same visual language as the rest of the sheet: paper tiles on hairlines,
+   ink buttons, jade reserved for the 实况 badge (state colour). Geometry
+   contract: cells are 3-column 3:4 tiles; .ig-idx/.ig-live/.ig-dl are
+   absolutely positioned overlays written by app.js's renderImageGrid. */
+.image-grid { margin-top: 4px; }
+.ig-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.ig-count {
+  font-size: 12px; font-weight: 600; color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ig-all {
+  height: 30px; padding: 0 12px;
+  border-radius: var(--r);
+  background: var(--solid); color: var(--on-solid);
+  font-size: 12px; font-weight: 700;
+  flex-shrink: 0;
+  transition: transform 0.12s ease, opacity 0.16s ease;
+}
+.ig-all:active { transform: scale(0.96); }
+.ig-all:disabled { opacity: 0.4; pointer-events: none; }
+.ig-cells {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+}
+.ig-cell {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  border-radius: var(--r);
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+.ig-cell img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ig-idx {
+  position: absolute; top: 5px; left: 5px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: var(--r-full);
+  background: rgba(12, 15, 20, 0.55);
+  color: #fff;
+  font-size: 9.5px; font-weight: 700;
+  font-family: var(--font-mono);
+  display: grid; place-items: center;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.ig-live {
+  position: absolute; top: 5px; right: 5px;
+  height: 16px; padding: 0 6px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 9.5px; font-weight: 700;
+  display: grid; place-items: center;
+}
+.ig-dl {
+  position: absolute; right: 5px; bottom: 5px;
+  width: 26px; height: 26px;
+  border-radius: 8px;
+  background: rgba(12, 15, 20, 0.55);
+  color: #fff;
+  display: grid; place-items: center;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  transition: transform 0.12s ease;
+}
+.ig-dl:active { transform: scale(0.9); }
+.ig-dl svg { width: 13px; height: 13px; }
+.ig-note {
+  margin-top: 10px;
+  font-size: 11px; color: var(--text-3); line-height: 1.65;
+}
+
 .parse-loading {
   display: none;
   flex-direction: column; align-items: center;

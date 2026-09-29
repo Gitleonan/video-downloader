@@ -249,6 +249,96 @@
   }
 
   window.App.doDownload = doDownload;
+
+  /* ========== 图文笔记下载(逐张 / 全部) ========== */
+  /* 任务键 = 下载地址(静图)或静帧地址(实况:原生进度事件按静帧地址
+     回报)。dlTasks 里已存在同键任务时直接忽略本次点击,防止重复入队。 */
+  function noteTitle(data) {
+    return (data.title || '').replace(/#[^\s#]+/g, ' ').trim() || 'image';
+  }
+
+  /* 笔记页来源是真 JPEG(实测 3024×4032 JFIF);API 来源是代理重写的
+     webp。扩展名跟着来源走,原生魔数校验两条路都放行。 */
+  function imageItemExt(it) {
+    return it.fromNote ? '.jpg' : '.webp';
+  }
+
+  function triggerAnchorDownload(url, filename) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  function doDownloadImage(index) {
+    const data = App.currentResult;
+    const items = data && data._imageItems;
+    const it = items && items[index];
+    if (!data || !it) return;
+    if (data._demo) {
+      App.showToast('演示模式：无法真实下载', 'err');
+      return;
+    }
+
+    const base = App.sanitizeFilename(noteTitle(data) + '-' + (index + 1));
+
+    if (it.live && it.liveVideo) {
+      if (dlTasks[it.still]) { App.showToast('该图已在下载列表'); return; }
+      if (window.AppBridge && typeof AppBridge.saveLivePhoto === 'function') {
+        // 原生合成 MicroVideo 动态照片(单文件 .jpg);进度事件按静帧
+        // 地址回报,任务行先在这里注册。
+        dlTasks[it.still] = { name: base + '.jpg', state: 'running', cur: 0, total: -1 };
+        renderTasks();
+        AppBridge.saveLivePhoto(it.still, it.liveVideo, base);
+        App.showToast('已开始下载实况图 ' + (index + 1));
+        App.showDlHint();
+        App.markDownloaded(App.currentHistoryId, 'image');
+        return;
+      }
+      // 浏览器预览:无合成能力,分存两个文件
+      triggerAnchorDownload(it.still, base + '.jpg');
+      triggerAnchorDownload(it.liveVideo, base + '.mp4');
+      App.showToast('浏览器环境无合成能力，已分开下载图片与视频');
+      return;
+    }
+
+    const url = it.still;
+    if (dlTasks[url]) { App.showToast('该图已在下载列表'); return; }
+    const filename = base + imageItemExt(it);
+    if (window.AppBridge && typeof AppBridge.download === 'function') {
+      dlTasks[url] = { name: filename, state: 'running', cur: 0, total: -1 };
+      renderTasks();
+      AppBridge.download(url, filename);
+      App.showToast('已开始下载第 ' + (index + 1) + ' 张');
+      App.showDlHint();
+      App.markDownloaded(App.currentHistoryId, 'image');
+      return;
+    }
+    triggerAnchorDownload(url, filename);
+    App.showToast('已开始下载第 ' + (index + 1) + ' 张');
+  }
+
+  function doDownloadAllImages() {
+    const data = App.currentResult;
+    const items = data && data._imageItems;
+    if (!data || !items || !items.length) return;
+    if (data._demo) {
+      App.showToast('演示模式：无法真实下载', 'err');
+      return;
+    }
+    // 逐个入队,300ms 间隔,避免瞬间打满下载队列(壳内无 zip 打包能力)
+    items.forEach(function (_, i) {
+      setTimeout(function () { doDownloadImage(i); }, i * 300);
+    });
+    App.showToast('已开始下载全部 ' + items.length + ' 张');
+  }
+
+  window.App.doDownloadImage = doDownloadImage;
+  window.App.doDownloadAllImages = doDownloadAllImages;
   window.App.hasSrc = hasSrc;
   window.App.pickDownloadUrl = pickDownloadUrl;
   window.App.sanitizeFilename = sanitizeFilename;

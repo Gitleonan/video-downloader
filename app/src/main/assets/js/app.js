@@ -373,9 +373,17 @@
         throw new Error(errMsg);
       }
 
-      renderResult(payload.data);
+      const data = payload.data;
+      let noteImgs = null;
+      if (isImageNote(data)) {
+        // 已拍板的数据源策略:默认抓笔记页拿无水印原图 + 实况数据,
+        // 抓取失败/超时/无桥 → 静默降级为 API 的 webp(仍可下载,无实况)。
+        parseLoadingTxt.textContent = '正在获取无水印原图…';
+        try { noteImgs = await enrichImageNote(url); } catch (_) { noteImgs = null; }
+      }
+      renderResult(data, noteImgs);
       bumpStats();
-      addHistory(payload.data, url, linkInput.value.trim());
+      addHistory(data, url, linkInput.value.trim());
     } catch (err) {
       console.error(err);
       if (!demoFallbackUsed) {
@@ -424,8 +432,178 @@
     return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
   }
 
+  /* ========== 小红书图文笔记 ========== */
+  /* 图文判定只能用 kind / noteType:API 在图文笔记上 data.type === 'video'
+     也成立(实测 16 张全实况的笔记 type 仍是 video),不可信。 */
+  function isImageNote(data) {
+    if (!data) return false;
+    const kindOk = data.kind === 'image' || data.noteType === 'image';
+    return kindOk && Array.isArray(data.images) && data.images.length > 0;
+  }
+
+  /* images 元素两种形态都要吃:OpenAPI 声明 string[],实测是
+     {index,url,downloadUrl} 对象数组(参考前端 types.ts 印证)。归一化成
+     {src: 显示用, dl: 下载用}。 */
+  function normalizeImages(images) {
+    return (images || []).map(function (v) {
+      if (typeof v === 'string') return { src: v, dl: v }
+      if (v && typeof v === 'object') {
+        const src = (typeof v.url === 'string' && v.url) ? v.url : '';
+        const dl = (typeof v.downloadUrl === 'string' && v.downloadUrl) ? v.downloadUrl : src;
+        return { src: src, dl: dl };
+      }
+      return null;
+    }).filter(Boolean).filter(function (x) { return !!x.src; });
+  }
+
+  /* 从笔记页 HTML 提取 __INITIAL_STATE__。它是 `window.__INITIAL_STATE__ =
+     {…}` 形态的对象字面量,字符串里可能含花括号,所以从第一个 { 起做
+     字符串感知的配平扫描,取到平衡为止再 JSON.parse。 */
+  function extractInitialState(html) {
+    const keyAt = html.indexOf('__INITIAL_STATE__');
+    if (keyAt < 0) return null;
+    const openAt = html.indexOf('{', keyAt);
+    if (openAt < 0) return null;
+    let depth = 0, inStr = false, esc = false, quote = '';
+    for (let i = openAt; i < html.length; i++) {
+      const ch = html[i];
+      if (inStr) {
+        if (esc) { esc = false; continue; }
+        if (ch === '\\') { esc = true; continue; }
+        if (ch === quote) inStr = false;
+        continue;
+      }
+      if (ch === '"' || ch === "'") { inStr = true; quote = ch; continue; }
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          try { return JSON.parse(html.slice(openAt, i + 1)); } catch (_) { return null; }
+        }
+      }
+    }
+    return null;
+  }
+
+  /* 归一化 __INITIAL_STATE__ 的 imageList → [{still, liveVideo, isLive}]。
+     现行移动端形态:noteData.data.noteData.imageList;旧版:
+     note.noteDetailMap[<noteId>].note.imageList,两路都试。实况 mp4 取
+     stream.h264[0](h265/h266/av1 实测恒为空),masterUrl 带签名会过期,
+     backupUrls[0] 无签名长期有效,master 优先、backup 兜底。 */
+  function parseNoteState(html, noteUrl) {
+    const state = extractInitialState(html);
+    if (!state) return null;
+    let imageList = null;
+    try {
+      imageList = state.noteData && state.noteData.data
+        && state.noteData.data.noteData
+        && state.noteData.data.noteData.imageList;
+    } catch (_) { imageList = null; }
+    if (!Array.isArray(imageList) || !imageList.length) {
+      // 旧版形态:note.noteDetailMap[<noteId>].note.imageList
+      try {
+        const m = String(noteUrl || '').match(/\/(?:explore|discovery\/item)\/([0-9a-f]+)/i);
+        const map = state.note && state.note.noteDetailMap;
+        const entry = map && (map[m ? m[1] : '']
+          || (map[Object.keys(map)[0]] || null));
+        imageList = entry && entry.note && entry.note.imageList;
+      } catch (_) { imageList = null; }
+    }
+    if (!Array.isArray(imageList) || !imageList.length) return null;
+    return imageList.map(function (it) {
+      it = it || {};
+      const stream = it.stream || {};
+      const h264 = Array.isArray(stream.h264) ? stream.h264 : [];
+      const v0 = h264[0] || {};
+      return {
+        still: typeof it.url === 'string' ? it.url : '',
+        liveVideo: (typeof v0.masterUrl === 'string' && v0.masterUrl)
+          || (Array.isArray(v0.backupUrls) && typeof v0.backupUrls[0] === 'string'
+            ? v0.backupUrls[0] : ''),
+        isLive: !!it.livePhoto
+      };
+    });
+  }
+
+  /* 原生抓笔记页(有桥时)。回调 __nativeNote({ok, html}) 只到一次,拿不到
+     或超时就 resolve(null) —— 调用方静默走 API 降级,不报错不打断。 */
+  function enrichImageNote(noteUrl) {
+    return new Promise(function (resolve) {
+      if (!(window.AppBridge && typeof AppBridge.fetchNoteHtml === 'function')) {
+        resolve(null);
+        return;
+      }
+      let settled = false;
+      const finish = function (v) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { delete window.__nativeNote; } catch (_) { window.__nativeNote = null; }
+        resolve(v);
+      };
+      window.__nativeNote = function (payload) {
+        if (!payload || !payload.ok || typeof payload.html !== 'string') { finish(null); return; }
+        try { finish(parseNoteState(payload.html, noteUrl)); }
+        catch (_) { finish(null); }
+      };
+      const timer = setTimeout(function () { finish(null); }, 12000);
+      try { AppBridge.fetchNoteHtml(noteUrl); }
+      catch (_) { finish(null); }
+    });
+  }
+
+  /* 合成最终 items:笔记页数据优先(无水印原图 + 实况),API images 兜底
+     (webp、无实况)。有笔记页数据时以它为准,API 只补显示缩略图。 */
+  function buildImageItems(apiImgs, noteImgs) {
+    if (noteImgs && noteImgs.length) {
+      return noteImgs.map(function (n, i) {
+        const api = apiImgs[i];
+        return {
+          display: (api && api.src) || n.still,
+          still: n.still,
+          live: n.isLive,
+          liveVideo: n.liveVideo,
+          fromNote: true
+        };
+      });
+    }
+    return (apiImgs || []).map(function (a) {
+      return { display: a.src, still: a.dl || a.src, live: false, liveVideo: '', fromNote: false };
+    });
+  }
+
+  /* 渲染图文网格:序号角标 + 实况徽标 + 逐张下载按钮。 */
+  function renderImageGrid(data) {
+    const items = data._imageItems || [];
+    const liveCount = items.filter(function (x) { return x.live && x.liveVideo; }).length;
+    $('ig-count').textContent = '共 ' + items.length + ' 张'
+      + (liveCount ? ' · ' + liveCount + ' 张实况' : '');
+    const cells = $('ig-cells');
+    cells.innerHTML = items.map(function (it, i) {
+      return '<div class="ig-cell">'
+        + '<img src="' + escapeAttr(it.display) + '" alt="" loading="lazy" referrerpolicy="no-referrer"/>'
+        + '<span class="ig-idx">' + (i + 1) + '</span>'
+        + (it.live && it.liveVideo ? '<span class="ig-live">实况</span>' : '')
+        + '<button class="ig-dl" data-ig="' + i + '" aria-label="下载第' + (i + 1) + '张">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/></svg>'
+        + '</button>'
+        + '</div>';
+    }).join('');
+    cells.querySelectorAll('.ig-dl').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        App.doDownloadImage(parseInt(btn.getAttribute('data-ig'), 10));
+      });
+    });
+    $('btn-dl-all').onclick = function () { App.doDownloadAllImages(); };
+    const fromNote = items.length > 0 && items[0].fromNote;
+    $('ig-note').textContent = (fromNote
+      ? '已通过笔记页获取无水印原图。'
+      : '笔记页不可用,已降级为预览图质量。')
+      + (liveCount ? '实况图将合成动态照片(.jpg),在支持的相册里按住即可播放。' : '');
+  }
+
   /* ========== Render result ========== */
-  function renderResult(data) {
+  function renderResult(data, noteImgs) {
     currentResult = data;
     stopPreview();
     parseLoading.classList.remove('show');
@@ -471,6 +649,28 @@
     const hasVideo = App.hasSrc(data.downloadVideoUrl) || App.hasSrc(data.originDownloadVideoUrl);
     const hasAudio = App.hasSrc(data.downloadAudioUrl) || App.hasSrc(data.originDownloadAudioUrl);
     const row = $('dl-row');
+    const grid = $('image-grid');
+    const previewWrap = $('preview-wrap');
+
+    if (isImageNote(data)) {
+      // 图文笔记:视频预览与视频/音频按钮整块隐藏,网格负责一切动作
+      data._imageItems = buildImageItems(normalizeImages(data.images), noteImgs);
+      renderImageGrid(data);
+      grid.style.display = 'block';
+      previewWrap.style.display = 'none';
+      row.style.display = 'none';
+      const notice = $('result-notice');
+      notice.classList.remove('is-active');
+      notice.textContent = '点格子右下角的按钮逐张保存,或点「全部下载」。'
+        + (data._imageItems.some(function (x) { return x.live && x.liveVideo; })
+          ? '实况图在支持的相册里按住可播放。' : '');
+      return;
+    }
+
+    // 非图文:恢复视频分支 UI(上一次结果可能是图文)
+    grid.style.display = 'none';
+    previewWrap.style.display = '';
+    row.style.display = '';
 
     if (!hasVideo && !hasAudio && !data._demo) {
       row.innerHTML = '<button class="dl-btn video full" id="btn-dl-video"><span class="label">复制原始链接</span></button>';
@@ -660,6 +860,8 @@
     const list = loadHistory();
     const id = Date.now();
     currentHistoryId = id;
+    // 图文笔记不往 videoUrl/audioUrl 塞空值,原图/实况地址单独存
+    const imgItems = isImageNote(data) ? (data._imageItems || []) : null;
     list.unshift({
       id: id,
       title: data.title || data.desc || '未命名',
@@ -669,8 +871,11 @@
       rawText: rawText || sourceUrl || '',
       duration: data.duration != null ? data.duration : null,
       ts: Date.now(),
-      videoUrl: App.pickDownloadUrl(data, 'video'),
-      audioUrl: App.pickDownloadUrl(data, 'audio'),
+      videoUrl: imgItems ? null : App.pickDownloadUrl(data, 'video'),
+      audioUrl: imgItems ? null : App.pickDownloadUrl(data, 'audio'),
+      imageUrls: imgItems ? imgItems.map(function (x) { return x.still; }) : null,
+      liveUrls: imgItems ? imgItems.map(function (x) { return x.liveVideo || null; }) : null,
+      imageCount: imgItems ? imgItems.length : null,
       downloaded: false,
       downloadedKind: null,
       localFile: null
@@ -710,6 +915,7 @@
             '<div class="tt">' + escapeHtml(item.title) + '</div>' +
             '<div class="sub">' +
               '<span class="p-tag">' + meta.name + '</span>' +
+              (item.imageCount ? '<span>图文 · ' + item.imageCount + ' 张</span>' : '') +
               (item.duration != null ? '<span>' + formatDuration(item.duration) + '</span>' : '') +
               '<span>' + time + '</span>' +
               dlBadge +

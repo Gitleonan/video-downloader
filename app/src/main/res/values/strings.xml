@@ -7,4 +7,5 @@
     <string name="saved_message">%s 已保存到手机，可在相册或文件管理中查看。</string>
     <string name="open_action">打开查看</string>
     <string name="close_action">知道了</string>
+    <string name="live_fallback_saved">实况图无法合成动态照片，已按 图片+视频 两个文件保存</string>
 </resources>
