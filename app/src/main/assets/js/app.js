@@ -30,7 +30,6 @@
 
   let currentResult = null;
   let toastTimer = null;
-  let demoFallbackUsed = false;
 
   /* ========== Theme ========== */
   /* The shell paints its status bar from the page's own palette, so the bar
@@ -253,7 +252,7 @@
   }
 
   function getPreviewVideoUrl(data) {
-    if (!data || data._demo) return null;
+    if (!data) return null;
     const candidates = [
       data.originDownloadVideoUrl,
       data.downloadVideoUrl,
@@ -282,11 +281,7 @@
 
     const src = getPreviewVideoUrl(data);
     if (!src) {
-      if (data._demo) {
-        showToast('演示数据：暂无可播放的视频');
-      } else {
-        showToast('没有可预览的视频地址', 'err');
-      }
+      showToast('没有可预览的视频地址', 'err');
       return;
     }
 
@@ -391,8 +386,8 @@
       console.error(err);
       // 解析 API 故障时,小红书图文还有一条不依赖 API 的路:原生抓笔记页
       // 直出(标题/图片/实况全在页面状态里)。视频笔记接不了这条路,只能
-      // 等 API 恢复。壳内(APBridge 存在)绝不展示演示假数据 —— 上游故障
-      // 被包装成「示例视频」会让用户以为应用坏了(真机踩过的坑)。
+      // 等 API 恢复。解析失败绝不展示演示假数据 —— 上游故障被包装成
+      // 「示例视频」会让用户以为应用坏了(真机踩过的坑)。
       if (plat === 'xiaohongshu'
           && window.AppBridge && typeof AppBridge.fetchNoteHtml === 'function') {
         parseLoadingTxt.textContent = '解析服务异常，尝试直接读取笔记页…';
@@ -407,34 +402,13 @@
           return;
         }
       }
-      if (!demoFallbackUsed && !window.AppBridge) {
-        // 仅浏览器预览保留演示兜底;壳内一律如实报错。
-        demoFallbackUsed = true;
-        renderResult(buildDemoResult(url, plat));
-        showToast('网络解析不可用，已展示演示数据');
-      } else {
-        parseLoading.classList.remove('show');
-        closeSheet();
-        showToast(err.message || '解析失败，请稍后重试', 'err');
-      }
+      parseLoading.classList.remove('show');
+      closeSheet();
+      const msg = (err && err.message) || '';
+      showToast(/failed to fetch/i.test(msg)
+        ? '无法连接解析服务，请稍后重试'
+        : (msg || '解析失败，请稍后重试'), 'err');
     }
-  }
-
-  function buildDemoResult(url, plat) {
-    const meta = PLATFORM_META[plat] || PLATFORM_META.other;
-    return {
-      title: '【演示】' + meta.name + ' · 示例视频标题',
-      desc: '这是一条演示数据，用于离线预览界面。',
-      cover: gradientCover(meta.color),
-      platform: plat === 'other' ? 'demo' : plat,
-      downloadVideoUrl: null,
-      downloadAudioUrl: null,
-      originDownloadVideoUrl: null,
-      originDownloadAudioUrl: null,
-      duration: 42,
-      url: url,
-      _demo: true
-    };
   }
 
   function gradientCover(color) {
@@ -780,7 +754,7 @@
     previewWrap.style.display = '';
     row.style.display = '';
 
-    if (!hasVideo && !hasAudio && !data._demo) {
+    if (!hasVideo && !hasAudio) {
       row.innerHTML = '<button class="dl-btn video full" id="btn-dl-video"><span class="label">复制原始链接</span></button>';
       document.getElementById('btn-dl-video').addEventListener('click', function () {
         copyText(data.url || linkInput.value);
@@ -797,15 +771,13 @@
       }
       const btnV = $('btn-dl-video');
       const btnA = $('btn-dl-audio');
-      if (btnV) btnV.style.display = (hasVideo || data._demo) ? '' : 'none';
-      if (btnA) btnA.style.display = (hasAudio || data._demo) ? '' : 'none';
+      if (btnV) btnV.style.display = hasVideo ? '' : 'none';
+      if (btnA) btnA.style.display = hasAudio ? '' : 'none';
     }
 
     const notice = $('result-notice');
     notice.classList.remove('is-active');
-    notice.textContent = data._demo
-      ? '当前为演示数据。连接网络后重新解析即可获取真实下载地址。'
-      : '点击下载后将调用系统下载器保存到手机。部分平台链接有时效，请尽快下载。';
+    notice.textContent = '点击下载后将调用系统下载器保存到手机。部分平台链接有时效，请尽快下载。';
   }
 
 

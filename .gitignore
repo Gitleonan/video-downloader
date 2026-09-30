@@ -30,3 +30,4 @@ Thumbs.db
 # personal video files). Neither belongs in the repository.
 .claude/
 .debug/
+.omc-*

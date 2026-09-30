@@ -142,11 +142,6 @@
     const data = App.currentResult;
     if (!data) return;
 
-    if (data._demo) {
-      App.showToast('演示模式：无法真实下载', 'err');
-      return;
-    }
-
     const url = pickDownloadUrl(data, kind);
     if (!url) {
       App.showToast(kind === 'video' ? '没有可用的视频地址' : '没有可用的音频地址', 'err');
@@ -279,10 +274,6 @@
     const items = data && data._imageItems;
     const it = items && items[index];
     if (!data || !it) return;
-    if (data._demo) {
-      App.showToast('演示模式：无法真实下载', 'err');
-      return;
-    }
 
     const base = App.sanitizeFilename(noteTitle(data) + '-' + (index + 1));
 
@@ -327,10 +318,6 @@
     const data = App.currentResult;
     const items = data && data._imageItems;
     if (!data || !items || !items.length) return;
-    if (data._demo) {
-      App.showToast('演示模式：无法真实下载', 'err');
-      return;
-    }
     // 逐个入队,300ms 间隔,避免瞬间打满下载队列(壳内无 zip 打包能力)
     items.forEach(function (_, i) {
       setTimeout(function () { doDownloadImage(i); }, i * 300);
