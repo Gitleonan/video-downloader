@@ -82,7 +82,7 @@ public class MotionPhotoTest {
         // Output = still-with-XMP + video, byte-identical video tail.
         assertEquals(still.length + video.length + /* APP1 */ 2 + 2
                 + "http://ns.adobe.com/xap/1.0/\0".length()
-                + MotionPhoto.microVideoXmp(video.length)
+                + MotionPhoto.motionPhotoXmp(video.length)
                         .getBytes(StandardCharsets.UTF_8).length, out.length);
         byte[] tail = new byte[video.length];
         System.arraycopy(out, out.length - video.length, tail, 0, video.length);
@@ -96,12 +96,22 @@ public class MotionPhotoTest {
         byte[] xmp = findXmpSegment(out);
         assertTrue(xmp != null);
         String x = new String(xmp, StandardCharsets.UTF_8);
+        // V1 (MicroVideo) attributes for older readers.
         assertTrue(x.contains("GCamera:MicroVideo=\"1\""));
         assertTrue(x.contains("GCamera:MicroVideoVersion=\"1\""));
         // Offset == appended video byte length (readers locate the video at
         // fileSize - offset).
         assertTrue(x.contains("GCamera:MicroVideoOffset=\"" + video.length + "\""));
         assertTrue(x.contains("GCamera:MicroVideoPresentationTimestampUs="));
+        // V2 (MotionPhoto) attributes for Android 12+ / Samsung / new MIUI.
+        assertTrue(x.contains("GCamera:MotionPhoto=\"1\""));
+        assertTrue(x.contains("GCamera:MotionPhotoVersion=\"1\""));
+        assertTrue(x.contains("GCamera:MotionPhotoPresentationTimestampUs="));
+        assertTrue(x.contains("<Container:Directory>"));
+        assertTrue(x.contains("<Item:Identifier>MotionPhoto</Item:Identifier>"));
+        assertTrue(x.contains("<Item:Mime>video/mp4</Item:Mime>"));
+        assertTrue(x.contains("<Item:Length>" + video.length + "</Item:Length>"));
+        assertTrue(x.contains("<Item:Length>0</Item:Length>"));   // primary item
 
         // The original JPEG (post-SOI) is preserved after the inserted APP1:
         // its EOI must sit exactly where the video begins.
@@ -118,6 +128,7 @@ public class MotionPhotoTest {
         byte[] xmp = findXmpSegment(out);
         String x = new String(xmp, StandardCharsets.UTF_8);
         assertTrue(x.contains("GCamera:MicroVideoOffset=\"5000\""));
+        assertTrue(x.contains("<Item:Length>5000</Item:Length>"));
         assertFalse(x.contains("GCamera:MicroVideoOffset=\"" + still.length + "\""));
     }
 

@@ -1,13 +1,15 @@
 package com.galaxy.downloader;
 
 /**
- * Google Motion Photo (MicroVideo V1) composer.
+ * Google Motion Photo composer.
  *
  * A motion photo is a valid JPEG whose tail is followed by a raw mp4. The
- * XMP packet (in an APP1 segment near the front of the file) carries
- * GCamera:MicroVideo=1 and MicroVideoOffset — the byte length of the
- * appended video — which readers use to locate the video start as
- * (fileSize - MicroVideoOffset).
+ * XMP packet (in an APP1 segment near the front of the file) carries both
+ * format generations: MicroVideo V1 (GCamera:MicroVideo=1 and
+ * MicroVideoOffset — the byte length of the appended video, which readers
+ * use to locate the video start as fileSize - MicroVideoOffset) and
+ * MotionPhoto V2 (Container:Directory with exact Item lengths), so both
+ * old and new gallery readers recognize the file.
  *
  * Pure byte manipulation on purpose: BitmapFactory transcoding of non-JPEG
  * stills lives in MainActivity (Android-only), while everything here runs
@@ -29,19 +31,46 @@ public final class MotionPhoto {
     }
 
     /**
-     * Builds the MicroVideo XMP packet for a still whose appended video is
-     * {@code videoLength} bytes.
+     * Builds the XMP packet for a still whose appended video is
+     * {@code videoLength} bytes. Carries BOTH generations of the Google
+     * motion photo format in one packet — exactly what Pixel cameras write:
+     * V1 (GCamera:MicroVideo*, readers locate the video at
+     * fileSize - MicroVideoOffset) for older galleries, and V2
+     * (GCamera:MotionPhoto* + Container:Directory with exact Item lengths)
+     * for Android 12+ / Samsung One UI / newer MIUI readers.
      */
-    public static String microVideoXmp(long videoLength) {
+    public static String motionPhotoXmp(long videoLength) {
         return "<?xpacket begin=\"﻿\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
                 + "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n"
                 + " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n"
                 + "  <rdf:Description rdf:about=\"\""
                 + " xmlns:GCamera=\"http://ns.google.com/photos/1.0/camera/\""
+                + " xmlns:Container=\"http://ns.google.com/photos/1.0/container/\""
+                + " xmlns:Item=\"http://ns.google.com/photos/1.0/container/item/\""
                 + " GCamera:MicroVideo=\"1\""
                 + " GCamera:MicroVideoVersion=\"1\""
                 + " GCamera:MicroVideoOffset=\"" + videoLength + "\""
-                + " GCamera:MicroVideoPresentationTimestampUs=\"" + PRESENTATION_US + "\"/>\n"
+                + " GCamera:MicroVideoPresentationTimestampUs=\"" + PRESENTATION_US + "\""
+                + " GCamera:MotionPhoto=\"1\""
+                + " GCamera:MotionPhotoVersion=\"1\""
+                + " GCamera:MotionPhotoPresentationTimestampUs=\"" + PRESENTATION_US + "\">\n"
+                + "   <Container:Directory>\n"
+                + "    <rdf:Bag>\n"
+                + "     <rdf:li rdf:parseType=\"Resource\">\n"
+                + "      <Item:Identifier>Primary</Item:Identifier>\n"
+                + "      <Item:Mime>image/jpeg</Item:Mime>\n"
+                + "      <Item:Length>0</Item:Length>\n"
+                + "      <Item:Padding>0</Item:Padding>\n"
+                + "     </rdf:li>\n"
+                + "     <rdf:li rdf:parseType=\"Resource\">\n"
+                + "      <Item:Identifier>MotionPhoto</Item:Identifier>\n"
+                + "      <Item:Mime>video/mp4</Item:Mime>\n"
+                + "      <Item:Length>" + videoLength + "</Item:Length>\n"
+                + "      <Item:Padding>0</Item:Padding>\n"
+                + "     </rdf:li>\n"
+                + "    </rdf:Bag>\n"
+                + "   </Container:Directory>\n"
+                + "  </rdf:Description>\n"
                 + " </rdf:RDF>\n"
                 + "</x:xmpmeta>\n"
                 + "<?xpacket end=\"w\"?>";
@@ -88,7 +117,7 @@ public final class MotionPhoto {
         if (video == null || video.length == 0) {
             throw new IllegalArgumentException("empty video");
         }
-        byte[] withXmp = injectXmp(stillJpeg, microVideoXmp(video.length));
+        byte[] withXmp = injectXmp(stillJpeg, motionPhotoXmp(video.length));
         byte[] out = new byte[withXmp.length + video.length];
         System.arraycopy(withXmp, 0, out, 0, withXmp.length);
         System.arraycopy(video, 0, out, withXmp.length, video.length);
