@@ -431,9 +431,11 @@ public class MainActivity extends AppCompatActivity {
          * MediaStore writes don't exist below, and raw public-storage writes
          * would need WRITE_EXTERNAL_STORAGE; there the two files are queued
          * as ordinary DownloadManager jobs instead. Progress events are
-         * keyed by the still url (the page registers that row). backupVideoUrl
-         * is the unsigned long-lived stream: tried automatically when the
-         * signed masterUrl fetch fails. */
+         * keyed by the still url (the page registers that row); the start
+         * event fires only when the task is dequeued (they run one at a
+         * time), so the page can show its 限速排队 state until then.
+         * backupVideoUrl is the unsigned long-lived stream: tried
+         * automatically when the signed masterUrl fetch fails. */
         @JavascriptInterface
         public void saveLivePhoto(String stillUrl, String videoUrl,
                                   String backupVideoUrl, String baseName) {
@@ -697,7 +699,9 @@ public class MainActivity extends AppCompatActivity {
         }
         final ByteTask task = new ByteTask();
         synchronized (activeByteTasks) { activeByteTasks.put(stillUrl, task); }
-        notifyPage("start", stillUrl, 0, 0);
+        // No "start" here: the executor may still be draining earlier items,
+        // and the page distinguishes 下载中 from 排队等待(避免限速) by when
+        // start arrives. runLivePhotoTask fires it when execution begins.
         livePhotoExecutor.execute(
                 () -> runLivePhotoTask(task, stillUrl, videoUrl, backupUrl, baseName));
     }
@@ -712,6 +716,10 @@ public class MainActivity extends AppCompatActivity {
                                   String backupUrl, String baseName) {
         try {
             if (task.cancelled) return;   // cancelled while queued behind another item
+            // Now actually executing (dequeued): flip the page row from
+            // 排队等待 to 下载中. Cancelled-while-queued rows were already
+            // settled by cancelDownload's own cancelled event.
+            mainHandler.post(() -> notifyPage("start", stillUrl, 0, 0));
             byte[] still = httpGetBytesRetry(task, stillUrl, stillUrl, 0, 32 * 1024 * 1024);
             if (task.cancelled) return;
             // Once the video's Content-Length is known the task bar switches

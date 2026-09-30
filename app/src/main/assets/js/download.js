@@ -24,7 +24,22 @@
      Session-scoped map of active downloads, driven purely by the shell's
      real events. Pause = native cancel (DownloadManager has no public
      pause); resume = re-enqueue with the same filename. */
-  const dlTasks = {};   // url -> { name, state: 'running'|'paused', cur, total }
+  const dlTasks = {};   // url -> { name, state: 'running'|'queued'|'paused', cur, total }
+  /* dlTasks.live 行 = 实况合成任务:壳内单线程串行执行(避免视频 CDN 同 IP
+     限速触发超时),入队即显示「排队等待(避免限速)」,出队时原生才发 start。 */
+
+  /* 实时速率采样(EMA):只采样总大小已知的字节任务,给排队行的
+     「预计 N 秒后开始」用。锚点法:每次开满 1 秒窗口算一次平均,
+     再做 EMA 平滑 —— 进度事件是突发的,按单事件间隔取样会把突发
+     字节全算进短窗口,速率被系统性高估(ETA 恒等于「即将开始」)。 */
+  let dlRateEma = 0;
+  let rateRef = null;
+
+  function fmtWait(sec) {
+    if (sec <= 3) return '即将开始';
+    if (sec < 60) return '预计约 ' + sec + ' 秒后开始';
+    return '预计约 ' + Math.ceil(sec / 60) + ' 分钟后开始';
+  }
 
   function fmtSize(n) {
     if (!n || n <= 0) return '…';
@@ -38,11 +53,38 @@
     if (!bar) return;
     const urls = Object.keys(dlTasks);
     bar.classList.toggle('show', urls.length > 0);
+    const liveUrls = urls.filter(function (u) { return dlTasks[u].live; });
+    let runningLive = null;
+    for (let i = 0; i < liveUrls.length; i++) {
+      const t = dlTasks[liveUrls[i]];
+      if (t.state === 'running' && t.total > 0) { runningLive = t; break; }
+    }
+    const etaSec = runningLive && dlRateEma > 0
+      ? Math.max(0, Math.round((runningLive.total - runningLive.cur) / dlRateEma))
+      : null;
     bar.innerHTML = urls.map(function (url) {
       const t = dlTasks[url];
       const pct = t.total > 0 ? Math.min(100, Math.round(t.cur * 100 / t.total)) : 0;
-      const stateTxt = t.state === 'paused' ? '已暂停'
-        : (t.total > 0 ? '下载中' : '排队中');
+      let stateTxt;
+      if (t.state === 'paused') {
+        stateTxt = '已暂停';
+      } else if (t.state === 'queued') {
+        const idx = liveUrls.indexOf(url);
+        const ahead = liveUrls.slice(0, idx).filter(function (u) {
+          const s = dlTasks[u].state;
+          return s === 'running' || s === 'queued';
+        }).length;
+        if (ahead <= 1) {
+          stateTxt = '排队等待（避免限速）'
+            + (etaSec == null ? '，前一张完成后自动开始' : '，' + fmtWait(etaSec));
+        } else {
+          stateTxt = '排队等待（避免限速），前面还有 ' + (ahead - 1) + ' 张';
+        }
+      } else {
+        // 非实况行无大小时多半是系统下载器 PENDING/限流,维持「排队中」;
+        // 实况行入队即跑,不该被误标
+        stateTxt = (t.total > 0 || t.live) ? '下载中' : '排队中';
+      }
       const sizeTxt = t.total > 0
         ? fmtSize(t.cur) + ' / ' + fmtSize(t.total)
         : (t.cur > 0 ? fmtSize(t.cur) : '');
@@ -79,9 +121,17 @@
       renderTasks();
       App.showToast('已暂停，继续将重新下载');
     } else if (act === 'resume') {
-      t.state = 'running'; t.cur = 0; t.total = -1;
+      // 实况行「继续」必须重新走合成通道:普通 download 只会下载静帧本体
+      t.state = t.live ? 'queued' : 'running'; t.cur = 0; t.total = -1;
       renderTasks();
-      try { if (window.AppBridge && AppBridge.download) AppBridge.download(url, t.name); } catch (_) {}
+      try {
+        if (t.live && window.AppBridge && typeof AppBridge.saveLivePhoto === 'function') {
+          AppBridge.saveLivePhoto(url, t.videoUrl, t.backupUrl || '',
+            t.base || (t.name || 'live').replace(/\.jpg$/i, ''));
+        } else if (window.AppBridge && AppBridge.download) {
+          AppBridge.download(url, t.name);
+        }
+      } catch (_) {}
     } else if (act === 'cancel') {
       if (t.state !== 'paused') {
         try { if (window.AppBridge && AppBridge.cancelDownload) AppBridge.cancelDownload(url); } catch (_) {}
@@ -98,6 +148,16 @@
       if (dlTasks[url]) { dlTasks[url].state = 'running'; renderTasks(); }
     },
     progress: function (url, cur, total) {
+      if (total > 0 && cur > 0) {
+        const now = Date.now();
+        if (!rateRef || rateRef.url !== url || cur < rateRef.cur) {
+          rateRef = { url: url, cur: cur, t: now };
+        } else if (now - rateRef.t >= 1000) {
+          const r = (cur - rateRef.cur) * 1000 / (now - rateRef.t);
+          dlRateEma = dlRateEma > 0 ? dlRateEma * 0.6 + r * 0.4 : r;
+          rateRef = { url: url, cur: cur, t: now };
+        }
+      }
       if (dlTasks[url]) {
         dlTasks[url].cur = cur;
         dlTasks[url].total = total;
@@ -282,11 +342,22 @@
       if (window.AppBridge && typeof AppBridge.saveLivePhoto === 'function') {
         // 原生合成 MicroVideo 动态照片(单文件 .jpg);进度事件按静帧
         // 地址回报,任务行先在这里注册。第 3 参是备用视频地址(masterUrl
-        // 带签名会过期,原生失败时自动换 backup 重试)。
-        dlTasks[it.still] = { name: base + '.jpg', state: 'running', cur: 0, total: -1 };
+        // 带签名会过期,原生失败时自动换 backup 重试)。行初始为排队态:
+        // 原生任务真正出队执行时才发 start,页面据此区分「下载中/排队」。
+        const queueBusy = Object.keys(dlTasks).some(function (u) {
+          const t = dlTasks[u];
+          return t.live && (t.state === 'running' || t.state === 'queued');
+        });
+        dlTasks[it.still] = {
+          name: base + '.jpg', state: 'queued', cur: 0, total: -1,
+          live: true, videoUrl: it.liveVideo,
+          backupUrl: it.liveVideoBackup || '', base: base
+        };
         renderTasks();
         AppBridge.saveLivePhoto(it.still, it.liveVideo, it.liveVideoBackup || '', base);
-        App.showToast('已开始下载实况图 ' + (index + 1));
+        App.showToast(queueBusy
+          ? '已加入队列，待当前实况完成后自动开始（逐张下载避免限速）'
+          : '已开始下载实况图 ' + (index + 1));
         App.showDlHint();
         App.markDownloaded(App.currentHistoryId, 'image');
         return;
@@ -322,7 +393,9 @@
     items.forEach(function (_, i) {
       setTimeout(function () { doDownloadImage(i); }, i * 300);
     });
-    App.showToast('已开始下载全部 ' + items.length + ' 张');
+    const liveCount = items.filter(function (x) { return x.live && x.liveVideo; }).length;
+    App.showToast('已开始下载全部 ' + items.length + ' 张'
+      + (liveCount > 1 ? '，实况图将逐张下载以避免 CDN 限速' : ''));
   }
 
   window.App.doDownloadImage = doDownloadImage;
