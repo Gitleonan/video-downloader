@@ -79,6 +79,13 @@ public class MainActivity extends AppCompatActivity {
     private WebView noteRenderView;
     private Runnable noteRenderTimeout;
     private Timer downloadTimer;
+    /** Live-photo compositions run one at a time: the page enqueues a whole
+     * image note within 300ms per item, and concurrent large-mp4 fetches
+     * from the same IP trip the XHS video CDN's throttling (real device:
+     * first item saved, second stalled past the read timeout). Serialized
+     * fetches also halve peak bandwidth on mobile networks. */
+    private final java.util.concurrent.ExecutorService livePhotoExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -689,12 +696,10 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         final ByteTask task = new ByteTask();
-        Thread worker = new Thread(
-                () -> runLivePhotoTask(task, stillUrl, videoUrl, backupUrl, baseName),
-                "live-photo");
         synchronized (activeByteTasks) { activeByteTasks.put(stillUrl, task); }
         notifyPage("start", stillUrl, 0, 0);
-        worker.start();
+        livePhotoExecutor.execute(
+                () -> runLivePhotoTask(task, stillUrl, videoUrl, backupUrl, baseName));
     }
 
     /** Byte-fetch still + mp4, compose a MicroVideo motion photo, store it
@@ -706,13 +711,16 @@ public class MainActivity extends AppCompatActivity {
     private void runLivePhotoTask(ByteTask task, String stillUrl, String videoUrl,
                                   String backupUrl, String baseName) {
         try {
-            byte[] still = httpGetBytes(task, stillUrl, stillUrl, 0, 32 * 1024 * 1024);
+            if (task.cancelled) return;   // cancelled while queued behind another item
+            byte[] still = httpGetBytesRetry(task, stillUrl, stillUrl, 0, 32 * 1024 * 1024);
             if (task.cancelled) return;
             // Once the video's Content-Length is known the task bar switches
             // from the indeterminate sweep to a percent over the combined size.
+            // Progress is keyed by the still url — that's the row the page
+            // registered (rule 16).
             byte[] video;
             try {
-                video = httpGetBytes(task, videoUrl, videoUrl,
+                video = httpGetBytesRetry(task, videoUrl, stillUrl,
                         still.length, 96 * 1024 * 1024);
             } catch (Exception e) {
                 if (task.cancelled) return;
@@ -720,7 +728,7 @@ public class MainActivity extends AppCompatActivity {
                 if (backupUrl == null || backupUrl.isEmpty()) {
                     throw new IOException("取视频失败：" + failReason(e));
                 }
-                video = httpGetBytes(task, backupUrl, videoUrl,
+                video = httpGetBytesRetry(task, backupUrl, stillUrl,
                         still.length, 96 * 1024 * 1024);
             }
             if (task.cancelled) return;
@@ -785,6 +793,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private static String failReason(Exception e) {
+        if (e instanceof java.net.SocketTimeoutException) {
+            return "网络超时，请换个网络环境重试";
+        }
         return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
     }
 
@@ -946,6 +957,25 @@ public class MainActivity extends AppCompatActivity {
         return null;
     }
 
+    /** One retry over a fresh connection for transport-level failures
+     * (stalled reads, connection resets — routine on mobile networks and
+     * under CDN throttling). HTTP status failures are not retried: a 403
+     * doesn't improve on a second attempt. Returns null only on cancellation
+     * (mirrors {@link #httpGetBytes}). */
+    private byte[] httpGetBytesRetry(ByteTask task, String url, String keyUrl,
+                                     long baseBytes, long maxBytes) throws IOException {
+        try {
+            return httpGetBytes(task, url, keyUrl, baseBytes, maxBytes);
+        } catch (IOException e) {
+            if (task.cancelled) throw e;
+            String msg = e.getMessage();
+            if (msg != null && msg.startsWith("HTTP ")) throw e;
+            android.util.Log.d("GalaxyDL", "fetch failed once, retrying: " + e);
+            if (task.cancelled) throw e;
+            return httpGetBytes(task, url, keyUrl, baseBytes, maxBytes);
+        }
+    }
+
     /** Fetches a URL fully into memory for a byte task, posting progress
      * events keyed by {@code keyUrl}: cur = baseBytes + bytes read, total =
      * baseBytes + Content-Length (or -1 → page keeps the indeterminate sweep).
@@ -955,8 +985,12 @@ public class MainActivity extends AppCompatActivity {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         task.conn = conn;
         try {
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(15000);
+            // Generous read gap (60 s): the read timeout is a between-packets
+            // budget, but mobile networks and throttling CDNs stall longer
+            // than the previous 15 s, which surfaced as spurious「超时」
+            // failures after the first item of a batch had already succeeded.
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(60000);
             conn.setInstanceFollowRedirects(true);
             int code = conn.getResponseCode();
             if (code != 200) throw new IOException("HTTP " + code);

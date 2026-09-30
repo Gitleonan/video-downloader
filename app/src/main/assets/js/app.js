@@ -534,6 +534,32 @@
     return null;
   }
 
+  /* 小红书 state 里的 CDN 地址存的是 http:// 协议(浏览器实测:官方前端
+     渲染前会升级成 https)。壳内页面是 https 源 + 原生 MIXED_CONTENT_
+     NEVER_ALLOW,http 静帧的 <img> 会被静默拦成空白 —— 而原生字节下载
+     不走该策略,于是出现「下载成功但预览空白」(v2.8 真机)。解析时统一
+     升级 https(CDN 双协议均 200,curl 实测)。 */
+  function httpsify(u) {
+    return typeof u === 'string' && u.lastIndexOf('http://', 0) === 0
+      ? 'https://' + u.slice(7) : u;
+  }
+
+  /* PC 端水合的 imageList[i].url 可能是空串(真机/浏览器实测),可渲染的
+     地址只在 infoList 里(WB_PRV/WB_DFT 两个场景,默认渲染用 WB_DFT)。
+     取 WB_DFT,没有就取最后一个非空项,作为静帧兜底。 */
+  function infoListStill(it) {
+    const list = Array.isArray(it.infoList) ? it.infoList : [];
+    let last = '';
+    for (let i = 0; i < list.length; i++) {
+      const x = list[i];
+      if (x && typeof x.url === 'string' && x.url) {
+        last = x.url;
+        if (x.imageScene === 'WB_DFT') return x.url;
+      }
+    }
+    return last;
+  }
+
   /* 归一化 __INITIAL_STATE__ 的 imageList → [{still, liveVideo, isLive}]。
      现行移动端形态:noteData.data.noteData.imageList;旧版:
      note.noteDetailMap[<noteId>].note.imageList,两路都试。实况 mp4 取
@@ -564,11 +590,11 @@
       const stream = it.stream || {};
       const h264 = Array.isArray(stream.h264) ? stream.h264 : [];
       const v0 = h264[0] || {};
-      const master = (typeof v0.masterUrl === 'string' && v0.masterUrl) || '';
-      const backup = (Array.isArray(v0.backupUrls) && typeof v0.backupUrls[0] === 'string'
-        && v0.backupUrls[0]) || '';
+      const master = httpsify((typeof v0.masterUrl === 'string' && v0.masterUrl) || '');
+      const backup = httpsify((Array.isArray(v0.backupUrls)
+        && typeof v0.backupUrls[0] === 'string' && v0.backupUrls[0]) || '');
       return {
-        still: typeof it.url === 'string' ? it.url : '',
+        still: httpsify((typeof it.url === 'string' && it.url) || infoListStill(it)),
         liveVideo: master || backup,
         liveVideoBackup: master ? backup : '',
         // 实况判定加固:不能只认 livePhoto 布尔位 —— 离屏渲染水合后的
