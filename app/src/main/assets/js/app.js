@@ -370,7 +370,9 @@
       const payload = await res.json().catch(() => null);
 
       if (!res.ok || !payload || !payload.success || !payload.data) {
-        const errMsg = (payload && (payload.error || payload.message)) || '解析失败，请检查链接';
+        const errMsg = (payload && (payload.error || payload.message))
+          || (payload && payload.code ? '解析失败（' + payload.code + '）' : null)
+          || '解析失败，请检查链接';
         throw new Error(errMsg);
       }
 
@@ -387,7 +389,26 @@
       addHistory(data, url, linkInput.value.trim());
     } catch (err) {
       console.error(err);
-      if (!demoFallbackUsed) {
+      // 解析 API 故障时,小红书图文还有一条不依赖 API 的路:原生抓笔记页
+      // 直出(标题/图片/实况全在页面状态里)。视频笔记接不了这条路,只能
+      // 等 API 恢复。壳内(APBridge 存在)绝不展示演示假数据 —— 上游故障
+      // 被包装成「示例视频」会让用户以为应用坏了(真机踩过的坑)。
+      if (plat === 'xiaohongshu'
+          && window.AppBridge && typeof AppBridge.fetchNoteHtml === 'function') {
+        parseLoadingTxt.textContent = '解析服务异常，尝试直接读取笔记页…';
+        const direct = await fetchNoteHtmlText(url)
+          .then(function (html) { return xhsDirectFromHtml(html, url); })
+          .catch(function () { return null; });
+        if (direct) {
+          renderResult(direct.data, direct.noteImgs);
+          bumpStats();
+          addHistory(direct.data, url, linkInput.value.trim());
+          showToast('解析服务暂不可用，已直接从笔记页获取');
+          return;
+        }
+      }
+      if (!demoFallbackUsed && !window.AppBridge) {
+        // 仅浏览器预览保留演示兜底;壳内一律如实报错。
         demoFallbackUsed = true;
         renderResult(buildDemoResult(url, plat));
         showToast('网络解析不可用，已展示演示数据');
@@ -565,31 +586,77 @@
     });
   }
 
-  /* 原生抓笔记页(有桥时)。回调 __nativeNote({ok, html}) 只到一次,拿不到
-     或超时就 resolve(null) —— 调用方静默走 API 降级,不报错不打断。 */
-  function enrichImageNote(noteUrl) {
-    return new Promise(function (resolve) {
+  /* 原生抓笔记页(有桥时)。回调 __nativeNote({ok, html}) 只到一次;
+     无桥/失败/超时 reject,由调用方决定怎么降级。 */
+  function fetchNoteHtmlText(noteUrl) {
+    return new Promise(function (resolve, reject) {
       if (!(window.AppBridge && typeof AppBridge.fetchNoteHtml === 'function')) {
-        resolve(null);
+        reject(new Error('no bridge'));
         return;
       }
       let settled = false;
-      const finish = function (v) {
+      const finish = function (err, html) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         try { delete window.__nativeNote; } catch (_) { window.__nativeNote = null; }
-        resolve(v);
+        if (err) reject(err); else resolve(html);
       };
       window.__nativeNote = function (payload) {
-        if (!payload || !payload.ok || typeof payload.html !== 'string') { finish(null); return; }
-        try { finish(parseNoteState(payload.html, noteUrl)); }
-        catch (_) { finish(null); }
+        if (!payload || !payload.ok || typeof payload.html !== 'string') {
+          finish(new Error((payload && payload.error) || 'fetch failed'));
+          return;
+        }
+        finish(null, payload.html);
       };
-      const timer = setTimeout(function () { finish(null); }, 12000);
+      const timer = setTimeout(function () { finish(new Error('timeout')); }, 12000);
       try { AppBridge.fetchNoteHtml(noteUrl); }
-      catch (_) { finish(null); }
+      catch (e) { finish(e); }
     });
+  }
+
+  /* API 正常返回时的图文增强:拿不到就 resolve(null),静默走 API 降级。 */
+  function enrichImageNote(noteUrl) {
+    return fetchNoteHtmlText(noteUrl).then(function (html) {
+      try { return parseNoteState(html, noteUrl); } catch (_) { return null; }
+    }).catch(function () { return null; });
+  }
+
+  /* API 故障时的小红书图文直取:标题/图片/实况全部来自笔记页状态本身,
+     不依赖解析 API。视频笔记的状态结构未接,返回 null 走报错路径。 */
+  function xhsDirectFromHtml(html, sourceUrl) {
+    const noteImgs = parseNoteState(html, sourceUrl);
+    if (!noteImgs || !noteImgs.length) return null;
+    const state = extractInitialState(html);
+    let title = '', desc = '';
+    try {
+      const nd = state && state.noteData && state.noteData.data
+        && state.noteData.data.noteData;
+      if (nd) { title = nd.title || ''; desc = nd.desc || ''; }
+    } catch (_) {}
+    if (!title) {
+      // 旧版形态:note.noteDetailMap[<noteId>].note
+      try {
+        const m = String(sourceUrl || '').match(/\/(?:explore|discovery\/item)\/([0-9a-f]+)/i);
+        const map = state && state.note && state.note.noteDetailMap;
+        const note = map && (map[m ? m[1] : ''] || map[Object.keys(map)[0]] || null);
+        if (note && note.note) { title = note.note.title || ''; desc = note.note.desc || ''; }
+      } catch (_) {}
+    }
+    const data = {
+      title: title || desc || '小红书图文',
+      desc: desc,
+      cover: noteImgs[0].still,
+      platform: 'xiaohongshu',
+      url: sourceUrl,
+      noteType: 'image',
+      kind: 'image',
+      images: noteImgs.map(function (n, i) {
+        return { index: i, url: n.still, downloadUrl: n.still };
+      }),
+      _direct: true
+    };
+    return { data: data, noteImgs: noteImgs };
   }
 
   /* 合成最终 items:笔记页数据优先(无水印原图 + 实况),API images 兜底
