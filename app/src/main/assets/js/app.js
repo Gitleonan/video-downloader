@@ -571,7 +571,10 @@
         still: typeof it.url === 'string' ? it.url : '',
         liveVideo: master || backup,
         liveVideoBackup: master ? backup : '',
-        isLive: !!it.livePhoto
+        // 实况判定加固:不能只认 livePhoto 布尔位 —— 离屏渲染水合后的
+        // state 可能丢掉它,但带 h264 流的图片项本身就是实况(真机踩过:
+        // v2.5 静态全量页有 livePhoto,v2.6+ 渲染路径徽标消失)。
+        isLive: !!it.livePhoto || h264.length > 0
       };
     });
   }

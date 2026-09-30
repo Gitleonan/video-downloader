@@ -595,9 +595,23 @@ public class MainActivity extends AppCompatActivity {
         if (noteRenderView != wv) return;   // superseded or torn down
         if (attempt >= 14) { finishNoteRender("页面加载超时"); return; }
         wv.evaluateJavascript(
-                "(function(){try{return window.__INITIAL_STATE__||null;}catch(e){return null;}})()",
+                "(function(){try{var s=window.__INITIAL_STATE__||null;"
+                + "var t=document.body?document.body.innerText:'';"
+                + "var missing=t.indexOf('当前笔记暂时无法浏览')>=0"
+                + "||t.indexOf('笔记不存在')>=0"
+                + "||t.indexOf('仅作者可见')>=0"
+                + "||t.indexOf('已被删除')>=0;"
+                + "if(missing)return '__XHS_NOTE_MISSING__';"
+                + "return s;}catch(e){return null;}})()",
                 value -> {
                     if (noteRenderView != wv) return;
+                    // Deleted / author-only notes never hydrate an image list
+                    // but DO show the placeholder text — report that distinctly
+                    // so the page can say 原文已失效 instead of a generic error.
+                    if (value != null && value.contains("__XHS_NOTE_MISSING__")) {
+                        finishNoteRender("原文已失效（笔记可能已被作者删除或仅自己可见）");
+                        return;
+                    }
                     // Ready once an image list actually has entries (the
                     // shell also carries empty containers), or a populated
                     // legacy noteDetailMap shows up.
@@ -711,12 +725,19 @@ public class MainActivity extends AppCompatActivity {
             }
             if (task.cancelled) return;
 
-            byte[] jpg = still;
+            // 实况封面的水印问题(真机反馈):网页版静帧渲染(sns-webpic
+            // 的 !h5_1080jpg)对实况图带小红书水印,相册缩略图可见、播放时
+            // 消失。mp4 本身无水印且尺寸与静帧一致(实况静帧本就是视频
+            // 尺寸),所以优先取视频第一帧做封面;取帧失败再退回原静帧。
+            byte[] jpg = extractFirstFrame(video);
+            if (jpg == null) {
+                jpg = still;
+            }
             if (!MotionPhoto.isJpeg(jpg)) {
                 // Page-source stills are JPEG; API-proxy stills are webp.
                 // Transcode through the framework decoder so composition
                 // also works off the fallback source (no native libs).
-                Bitmap bmp = BitmapFactory.decodeByteArray(still, 0, still.length);
+                Bitmap bmp = BitmapFactory.decodeByteArray(jpg, 0, jpg.length);
                 if (bmp != null) {
                     ByteArrayOutputStream b = new ByteArrayOutputStream();
                     bmp.compress(Bitmap.CompressFormat.JPEG, 92, b);
@@ -765,6 +786,41 @@ public class MainActivity extends AppCompatActivity {
 
     private static String failReason(Exception e) {
         return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+    }
+
+    /** Decodes the mp4's first frame as JPEG bytes (null on failure). The
+     * motion part is watermark-free and — for XHS live photos — the same
+     * size as the still rendition, so it makes a cleaner composed cover
+     * than the watermarked web still. Framework-only (MediaMetadataRetriever
+     * needs a seekable source, hence the temp file). */
+    private byte[] extractFirstFrame(byte[] video) {
+        java.io.File tmp = new java.io.File(getCacheDir(),
+                "live_frame_" + System.currentTimeMillis() + ".mp4");
+        try {
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tmp)) {
+                fos.write(video);
+            }
+            android.media.MediaMetadataRetriever r = new android.media.MediaMetadataRetriever();
+            try {
+                r.setDataSource(tmp.getAbsolutePath());
+                Bitmap bmp = r.getFrameAtTime(0,
+                        android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+                if (bmp == null) return null;
+                ByteArrayOutputStream b = new ByteArrayOutputStream();
+                bmp.compress(Bitmap.CompressFormat.JPEG, 92, b);
+                bmp.recycle();
+                android.util.Log.d("GalaxyDL", "live cover from video frame, "
+                        + b.size() + " bytes");
+                return b.toByteArray();
+            } finally {
+                try { r.release(); } catch (Exception ignore) {}
+            }
+        } catch (Exception e) {
+            android.util.Log.d("GalaxyDL", "first-frame extract failed: " + e);
+            return null;
+        } finally {
+            tmp.delete();
+        }
     }
 
     /** Compose-fallback on 29+: still (sniffed type) + mp4 as two separate
