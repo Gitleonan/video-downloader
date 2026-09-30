@@ -74,6 +74,10 @@ public class MainActivity extends AppCompatActivity {
      * 「打开查看」 dialog — image notes download N files at once and stacked
      * dialogs bury the user (real-device feedback). Keyed by row id. */
     private final Set<Long> toastOnlyDownloads = new HashSet<>();
+    /** Offscreen WebView used to let XHS's own page JS hydrate the note
+     * state when a static fetch only gets the empty shell. Main thread. */
+    private WebView noteRenderView;
+    private Runnable noteRenderTimeout;
     private Timer downloadTimer;
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -398,27 +402,18 @@ public class MainActivity extends AppCompatActivity {
                 final String ua = webView != null
                         ? webView.getSettings().getUserAgentString() : null;
                 new Thread(() -> {
-                    String payload;
-                    try {
-                        String html = httpGetString(fUrl, ua);
-                        org.json.JSONObject o = new org.json.JSONObject();
-                        o.put("ok", html != null);
-                        if (html != null) o.put("html", html);
-                        else o.put("error", "fetch failed or empty body");
-                        payload = o.toString();
-                    } catch (Exception e) {
-                        try {
-                            payload = new org.json.JSONObject()
-                                    .put("ok", false)
-                                    .put("error", String.valueOf(e)).toString();
-                        } catch (Exception ignore) {
-                            payload = "{\"ok\":false,\"error\":\"fetch failed\"}";
-                        }
+                    String html = null;
+                    try { html = httpGetString(fUrl, ua); } catch (Exception ignore) {}
+                    // Full server-rendered pages carry the image list inline;
+                    // XHS risk control increasingly serves an anonymous
+                    // client-hydration shell (no imageList) instead — fall
+                    // through to the offscreen render for those.
+                    if (html != null && html.contains("__INITIAL_STATE__")
+                            && html.contains("imageList")) {
+                        deliverNotePayload(buildNotePayload(true, html, null));
+                        return;
                     }
-                    final String js = "window.__nativeNote && __nativeNote(" + payload + ")";
-                    mainHandler.post(() -> {
-                        if (webView != null) webView.evaluateJavascript(js, null);
-                    });
+                    mainHandler.post(() -> startNoteRenderFetch(fUrl));
                 }, "note-fetch").start();
             });
         }
@@ -568,6 +563,95 @@ public class MainActivity extends AppCompatActivity {
     private static final class ByteTask {
         volatile boolean cancelled;
         volatile HttpURLConnection conn;
+    }
+
+    /** Renders the note URL in an offscreen WebView and lets XHS's own page
+     * JS hydrate __INITIAL_STATE__: anonymous static fetches increasingly
+     * get a client-hydration shell with EMPTY note data (risk control), but
+     * a real browser still loads the note. Polls the serialized state until
+     * an image list appears, then wraps it as a synthetic html document and
+     * delivers it through the same __nativeNote callback — the page-side
+     * parser is unchanged. Must run on the UI thread. */
+    private void startNoteRenderFetch(String url) {
+        teardownNoteRender();
+        final WebView wv = new WebView(this);
+        noteRenderView = wv;
+        WebSettings s = wv.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setBlockNetworkImage(true);   // only the state is needed, skip pixels
+        wv.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String u) {
+                pollNoteState(view, 0);
+            }
+        });
+        wv.loadUrl(url);
+        noteRenderTimeout = () -> finishNoteRender("页面加载超时");
+        mainHandler.postDelayed(noteRenderTimeout, 22000);
+    }
+
+    private void pollNoteState(WebView wv, int attempt) {
+        if (noteRenderView != wv) return;   // superseded or torn down
+        if (attempt >= 14) { finishNoteRender("页面加载超时"); return; }
+        wv.evaluateJavascript(
+                "(function(){try{return window.__INITIAL_STATE__||null;}catch(e){return null;}})()",
+                value -> {
+                    if (noteRenderView != wv) return;
+                    // Ready once an image list actually has entries (the
+                    // shell also carries empty containers), or a populated
+                    // legacy noteDetailMap shows up.
+                    boolean ready = value != null
+                            && (value.contains("\"imageList\":[{")
+                                || (value.contains("noteDetailMap")
+                                    && !value.contains("noteDetailMap\":{}")));
+                    if (ready) {
+                        teardownNoteRender();
+                        deliverNotePayload(buildNotePayload(true,
+                                "<!doctype html><script>window.__INITIAL_STATE__="
+                                        + value + ";</script>", null));
+                        return;
+                    }
+                    mainHandler.postDelayed(() -> pollNoteState(wv, attempt + 1), 1000);
+                });
+    }
+
+    private void finishNoteRender(String reason) {
+        teardownNoteRender();
+        deliverNotePayload(buildNotePayload(false, null, reason));
+    }
+
+    private void teardownNoteRender() {
+        if (noteRenderTimeout != null) {
+            mainHandler.removeCallbacks(noteRenderTimeout);
+            noteRenderTimeout = null;
+        }
+        if (noteRenderView != null) {
+            WebView wv = noteRenderView;
+            noteRenderView = null;
+            try { wv.loadUrl("about:blank"); wv.destroy(); } catch (Exception ignore) {}
+        }
+    }
+
+    /** JSON-stringifies the __nativeNote callback payload and evaluates it
+     * on the main thread. org.json handles all string escaping. */
+    private void deliverNotePayload(String payload) {
+        final String js = "window.__nativeNote && __nativeNote(" + payload + ")";
+        mainHandler.post(() -> {
+            if (webView != null) webView.evaluateJavascript(js, null);
+        });
+    }
+
+    private static String buildNotePayload(boolean ok, String html, String error) {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            o.put("ok", ok);
+            if (html != null) o.put("html", html);
+            if (error != null) o.put("error", error);
+            return o.toString();
+        } catch (Exception ignore) {
+            return "{\"ok\":false,\"error\":\"payload build failed\"}";
+        }
     }
 
     private void startLivePhotoTask(String stillUrl, String videoUrl,
@@ -1138,6 +1222,12 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "没有找到可以打开该视频的应用",
                     Toast.LENGTH_SHORT).show();
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        teardownNoteRender();
+        super.onDestroy();
     }
 
     @Override

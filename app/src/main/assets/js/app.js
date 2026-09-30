@@ -392,13 +392,29 @@
           && window.AppBridge && typeof AppBridge.fetchNoteHtml === 'function') {
         parseLoadingTxt.textContent = '解析服务异常，尝试直接读取笔记页…';
         const direct = await fetchNoteHtmlText(url)
-          .then(function (html) { return xhsDirectFromHtml(html, url); })
-          .catch(function () { return null; });
-        if (direct) {
+          .then(function (html) {
+            return xhsDirectFromHtml(html, url) || { _noData: true };
+          })
+          .catch(function (e) { return { _fetchError: e }; });
+        if (direct && direct.data) {
           renderResult(direct.data, direct.noteImgs);
           bumpStats();
           addHistory(direct.data, url, linkInput.value.trim());
           showToast('解析服务暂不可用，已直接从笔记页获取');
+          return;
+        }
+        // 直取失败的原因比 API 错误码更有行动价值,优先展示
+        if (direct && direct._fetchError) {
+          parseLoading.classList.remove('show');
+          closeSheet();
+          showToast('抓取笔记页失败：'
+            + ((direct._fetchError && direct._fetchError.message) || '未知原因'), 'err');
+          return;
+        }
+        if (direct && direct._noData) {
+          parseLoading.classList.remove('show');
+          closeSheet();
+          showToast('笔记页未返回图文数据（可能触发风控），请稍后重试', 'err');
           return;
         }
       }
