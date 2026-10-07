@@ -337,8 +337,30 @@
   <div id="toast-msg">已复制</div>
 </div>
 
-<!-- Persistent background-download task bar (native shell only) -->
-<div class="taskbar" id="taskbar"></div>
+<!-- Background-download island: collapsed as a floating dot at the bottom-
+     right (progress ring + task count), tap to morph-expand into the task
+     panel, close collapses back. Driven by real native events only. -->
+<div class="taskbar" id="taskbar" aria-live="polite">
+  <div class="tb-dot" id="tb-dot" role="button" aria-label="展开下载任务">
+    <svg class="tb-ring" id="tb-ring-svg" viewBox="0 0 44 44">
+      <circle class="ring-bg" cx="22" cy="22" r="19"/>
+      <circle class="ring-fg" id="tb-ring" cx="22" cy="22" r="19"/>
+    </svg>
+    <svg class="tb-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/>
+    </svg>
+    <span class="tb-count" id="tb-count">0</span>
+  </div>
+  <div class="tb-panel" id="tb-panel">
+    <div class="tb-head">
+      <div class="tb-title">下载任务 <span id="tb-panel-count"></span></div>
+      <button class="tb-close" id="tb-close" aria-label="收起任务列表">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="tb-list" id="tb-list"></div>
+  </div>
+</div>
 
 <script src="js/shared.js"></script>
 <script src="js/download.js"></script>

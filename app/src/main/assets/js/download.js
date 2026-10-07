@@ -48,11 +48,28 @@
     return (n / 1048576).toFixed(1) + ' MB';
   }
 
+  /* 任务岛展开态:点 dot 展开、点收起按钮缩回,任务清空自动复位。
+     纯页面状态,与原生事件无耦合。 */
+  let taskbarExpanded = false;
+
+  function setTaskbarExpanded(v) {
+    taskbarExpanded = v;
+    const bar = $('taskbar');
+    if (bar) bar.classList.toggle('expanded', v);
+  }
+
+  const RING_LEN = 119.38;   /* 2π·19,dot 进度环周长 */
+
   function renderTasks() {
     const bar = $('taskbar');
     if (!bar) return;
     const urls = Object.keys(dlTasks);
     bar.classList.toggle('show', urls.length > 0);
+    if (!urls.length) {
+      setTaskbarExpanded(false);
+      bar.classList.remove('indet');
+      return;
+    }
     const liveUrls = urls.filter(function (u) { return dlTasks[u].live; });
     let runningLive = null;
     for (let i = 0; i < liveUrls.length; i++) {
@@ -62,49 +79,81 @@
     const etaSec = runningLive && dlRateEma > 0
       ? Math.max(0, Math.round((runningLive.total - runningLive.cur) / dlRateEma))
       : null;
-    bar.innerHTML = urls.map(function (url) {
-      const t = dlTasks[url];
-      const pct = t.total > 0 ? Math.min(100, Math.round(t.cur * 100 / t.total)) : 0;
-      let stateTxt;
-      if (t.state === 'paused') {
-        stateTxt = '已暂停';
-      } else if (t.state === 'queued') {
-        const idx = liveUrls.indexOf(url);
-        const ahead = liveUrls.slice(0, idx).filter(function (u) {
-          const s = dlTasks[u].state;
-          return s === 'running' || s === 'queued';
-        }).length;
-        if (ahead <= 1) {
-          stateTxt = '排队等待（避免限速）'
-            + (etaSec == null ? '，前一张完成后自动开始' : '，' + fmtWait(etaSec));
+
+    /* dot 层:环形进度(已知字节数的任务求和;全未知→不定角度旋转),
+       数量角标。总大小已知才算得出比例,未知时 indet 类接管。 */
+    let sumCur = 0, sumTotal = 0, allUnknown = true;
+    for (let i = 0; i < urls.length; i++) {
+      const t = dlTasks[urls[i]];
+      if (t.total > 0) { sumCur += t.cur; sumTotal += t.total; allUnknown = false; }
+    }
+    bar.classList.toggle('indet', allUnknown);
+    const ring = $('tb-ring');
+    if (ring) {
+      const ratio = allUnknown ? 0 : Math.min(1, sumCur / sumTotal);
+      ring.style.strokeDashoffset = String(RING_LEN * (1 - ratio));
+    }
+    const countEl = $('tb-count');
+    if (countEl) countEl.textContent = urls.length > 99 ? '99+' : String(urls.length);
+    const panelCount = $('tb-panel-count');
+    if (panelCount) panelCount.textContent = '(' + urls.length + ')';
+    bar.classList.toggle('expanded', taskbarExpanded);
+
+    const list = $('tb-list');
+    if (list) {
+      list.innerHTML = urls.map(function (url) {
+        const t = dlTasks[url];
+        const pct = t.total > 0 ? Math.min(100, Math.round(t.cur * 100 / t.total)) : 0;
+        let stateTxt;
+        if (t.state === 'paused') {
+          stateTxt = '已暂停';
+        } else if (t.state === 'queued') {
+          const idx = liveUrls.indexOf(url);
+          const ahead = liveUrls.slice(0, idx).filter(function (u) {
+            const s = dlTasks[u].state;
+            return s === 'running' || s === 'queued';
+          }).length;
+          if (ahead <= 1) {
+            stateTxt = '排队等待（避免限速）'
+              + (etaSec == null ? '，前一张完成后自动开始' : '，' + fmtWait(etaSec));
+          } else {
+            stateTxt = '排队等待（避免限速），前面还有 ' + (ahead - 1) + ' 张';
+          }
         } else {
-          stateTxt = '排队等待（避免限速），前面还有 ' + (ahead - 1) + ' 张';
+          // 非实况行无大小时多半是系统下载器 PENDING/限流,维持「排队中」;
+          // 实况行入队即跑,不该被误标
+          stateTxt = (t.total > 0 || t.live) ? '下载中' : '排队中';
         }
-      } else {
-        // 非实况行无大小时多半是系统下载器 PENDING/限流,维持「排队中」;
-        // 实况行入队即跑,不该被误标
-        stateTxt = (t.total > 0 || t.live) ? '下载中' : '排队中';
-      }
-      const sizeTxt = t.total > 0
-        ? fmtSize(t.cur) + ' / ' + fmtSize(t.total)
-        : (t.cur > 0 ? fmtSize(t.cur) : '');
-      const acts = t.state === 'paused'
-        ? '<button class="t-btn wide" data-act="resume">继续</button>' +
-          '<button class="t-btn danger" data-act="cancel">取消</button>'
-        : '<button class="t-btn" data-act="pause">暂停</button>' +
-          '<button class="t-btn danger" data-act="cancel">取消</button>';
-      return '<div class="task' + (t.state === 'paused' ? ' paused' : '') + '" data-url="' + escapeAttr(url) + '">' +
-        '<div class="t-main">' +
-          '<div class="t-name">' + escapeHtml(t.name || '下载任务') + '</div>' +
-          '<div class="t-sub"><span class="t-state' + (t.state === 'paused' ? ' paused' : '') + '">' + stateTxt + '</span>' +
-            (sizeTxt ? '<span>' + sizeTxt + '</span>' : '') +
-            (t.total > 0 ? '<span class="t-pct">' + pct + '%</span>' : '') + '</div>' +
+        const sizeTxt = t.total > 0
+          ? fmtSize(t.cur) + ' / ' + fmtSize(t.total)
+          : (t.cur > 0 ? fmtSize(t.cur) : '');
+        const acts = t.state === 'paused'
+          ? '<button class="t-btn wide" data-act="resume">继续</button>' +
+            '<button class="t-btn danger" data-act="cancel">取消</button>'
+          : '<button class="t-btn" data-act="pause">暂停</button>' +
+            '<button class="t-btn danger" data-act="cancel">取消</button>';
+        return '<div class="task' + (t.state === 'paused' ? ' paused' : '') + '" data-url="' + escapeAttr(url) + '">' +
+          '<div class="t-main">' +
+            '<div class="t-name">' + escapeHtml(t.name || '下载任务') + '</div>' +
+            '<div class="t-sub"><span class="t-state' + (t.state === 'paused' ? ' paused' : '') + '">' + stateTxt + '</span>' +
+              (sizeTxt ? '<span>' + sizeTxt + '</span>' : '') +
+              (t.total > 0 ? '<span class="t-pct">' + pct + '%</span>' : '') + '</div>' +
           '<div class="t-bar"><i style="width:' + pct + '%"></i></div>' +
         '</div>' +
         '<div class="t-actions">' + acts + '</div>' +
       '</div>';
-    }).join('');
+      }).join('');
+      /* 面板高度跟内容走(头 46 + 列表实高),上限 56vh;同步测量不依赖
+         rAF —— 后台标签里 rAF 冻结(壳的已知坑)。测量在收起态也成立:
+         面板层是固定设计尺寸,不被容器裁剪影响。 */
+      const contentH = 46 + list.scrollHeight + 20;
+      const maxH = Math.round(window.innerHeight * 0.56);
+      bar.style.setProperty('--panel-h', Math.max(150, Math.min(contentH, maxH)) + 'px');
+    }
   }
+
+  $('tb-dot').addEventListener('click', function () { setTaskbarExpanded(true); });
+  $('tb-close').addEventListener('click', function () { setTaskbarExpanded(false); });
 
   $('taskbar').addEventListener('click', function (e) {
     const btn = e.target.closest('.t-btn');
@@ -140,6 +189,33 @@
       renderTasks();
     }
   });
+
+  /* 图片下载失败(坏内容守卫/下载器失败)时的自动重试:换成该图的备用
+     通道(直链挂→API 代理,代理冷启动偶发 200+错误体→直链)重下一次。
+     只重试一次:_triedFallback 记在当前解析的图片项上;备用通道再失败
+     时 item.still !== url 匹配不到,自然走原生失败 toast。 */
+  function tryImageFallback(url) {
+    const data = App.currentResult;
+    const items = data && data._imageItems;
+    if (!items) return false;
+    if (!(window.AppBridge && typeof AppBridge.download === 'function')) return false;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.still !== url || it._triedFallback) continue;
+      it._triedFallback = true;
+      const alt = it.fallback;
+      if (!alt || dlTasks[alt]) return false;
+      const filename = App.sanitizeFilename(noteTitle(data) + '-' + (i + 1))
+        + imageItemExt(it);
+      // 重试行以备用地址为新键注册(原生事件按下载地址回报),文件名不变
+      dlTasks[alt] = { name: filename, state: 'running', cur: 0, total: -1 };
+      renderTasks();
+      try { AppBridge.download(alt, filename); } catch (_) { delete dlTasks[alt]; return false; }
+      App.showToast('第 ' + (i + 1) + ' 张下载失败，已换备用通道重试');
+      return true;
+    }
+    return false;
+  }
 
   window.__nativeDownload = {
     start: function (url) {
@@ -177,6 +253,13 @@
       }
     },
     done: function (url, ok) {
+      // 图片任务失败先换备用通道重试一次:重试行以备用地址为新键,
+      // 原行移除,任务列表里表现为同一张图继续下
+      if (!ok && tryImageFallback(url)) {
+        delete dlTasks[url];
+        renderTasks();
+        return;
+      }
       if (dlTasks[url]) { delete dlTasks[url]; renderTasks(); }
       const d = nativeDownloads[url];
       if (!d) return;

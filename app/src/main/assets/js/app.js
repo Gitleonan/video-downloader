@@ -357,8 +357,20 @@
     resultView.style.display = 'none';
     openSheet();
 
+    // 抖音分享短链必须先在原生侧还原成最终地址:解析服务对 v.douyin.com
+    // 短链会误判(实测图文短链被解析成 audio,下载出来不是图片),换成
+    // 还原后的 iesdouyin /share/note/<id>/ 直链就返回正确的图文数据。
+    // 无桥(浏览器预览)或还原失败时用原链接,行为与旧版一致。
+    let parseUrl = url;
+    if (plat === 'douyin') {
+      try {
+        const resolved = normalizeDouyinShare(await resolveRedirectText(url));
+        if (resolved) parseUrl = resolved;
+      } catch (_) { /* 保持 parseUrl = url */ }
+    }
+
     try {
-      const res = await fetch(API_BASE + '/api/parse?url=' + encodeURIComponent(url), {
+      const res = await fetch(API_BASE + '/api/parse?url=' + encodeURIComponent(parseUrl), {
         method: 'GET',
         cache: 'no-store'
       });
@@ -373,15 +385,19 @@
 
       const data = payload.data;
       let noteImgs = null;
-      if (isImageNote(data)) {
-        // 已拍板的数据源策略:默认抓笔记页拿无水印原图 + 实况数据,
+      if (isImageNote(data) && plat === 'xiaohongshu') {
+        // 已拍板的数据源策略:小红书图文默认抓笔记页拿无水印原图 + 实况数据,
         // 抓取失败/超时/无桥 → 静默降级为 API 的 webp(仍可下载,无实况)。
+        // 只有小红书有笔记页直取路:抖音图文的分享页匿名是水合空壳、蜘蛛
+        // SSR 只渲染第一张,API 是唯一数据源 —— 旧版在这里对抖音也跑增强,
+        // 离屏渲染兜底空转 22s 才出图(壳内实测)。
         parseLoadingTxt.textContent = '正在获取无水印原图…';
         try { noteImgs = await enrichImageNote(url); } catch (_) { noteImgs = null; }
       }
       renderResult(data, noteImgs);
       bumpStats();
-      addHistory(data, url, linkInput.value.trim());
+      // 历史记还原后的直链:短链会过期,直链(已剥跟踪参数)重新解析更可靠
+      addHistory(data, parseUrl, linkInput.value.trim());
     } catch (err) {
       console.error(err);
       // 解析 API 故障时,小红书图文还有一条不依赖 API 的路:原生抓笔记页
@@ -560,6 +576,22 @@
     return last;
   }
 
+  /* 静帧地址选原图:现行移动端水合的 imageList[i].url 已不是原图,而是
+     `!h5_1080jpg` 渲染版(≤1080 宽,且普通图文也盖中心小红书水印 —— 用户
+     实测反馈)。无水印原图的稳定入口是 fileId(即 CDN 存储路径,含
+     notes_pre_post/ 之类目录前缀,必须原样拼接):sns-img 主机 + fileId
+     直出存档原图,无签名不过期、支持 Range(DownloadManager 场景实测)。
+     旧水合形态 url 本身就是 sns-img 原图,直接用;两者都没有才退回渲染
+     版(有水印,但至少能下)。实况不受影响:合成封面优先取 mp4 第一帧。 */
+  function originalStill(it) {
+    it = it || {};
+    const fid = typeof it.fileId === 'string' ? it.fileId.replace(/^\/+/, '') : '';
+    if (fid) return 'https://sns-img-qc.xhscdn.com/' + fid;
+    const u = httpsify((typeof it.url === 'string' && it.url) || '');
+    if (u && u.indexOf('sns-img') >= 0) return u;
+    return u || httpsify(infoListStill(it));
+  }
+
   /* 归一化 __INITIAL_STATE__ 的 imageList → [{still, liveVideo, isLive}]。
      现行移动端形态:noteData.data.noteData.imageList;旧版:
      note.noteDetailMap[<noteId>].note.imageList,两路都试。实况 mp4 取
@@ -594,7 +626,7 @@
       const backup = httpsify((Array.isArray(v0.backupUrls)
         && typeof v0.backupUrls[0] === 'string' && v0.backupUrls[0]) || '');
       return {
-        still: httpsify((typeof it.url === 'string' && it.url) || infoListStill(it)),
+        still: originalStill(it),
         liveVideo: master || backup,
         liveVideoBackup: master ? backup : '',
         // 实况判定加固:不能只认 livePhoto 布尔位 —— 离屏渲染水合后的
@@ -632,6 +664,45 @@
       try { AppBridge.fetchNoteHtml(noteUrl); }
       catch (e) { finish(e); }
     });
+  }
+
+  /* 原生解析重定向链(有桥时),回调 __nativeResolved({ok, url}) 只到一次。
+     页面 fetch 看不到跨域重定向的最终地址,必须由原生代走。无桥/失败/
+     超时 reject,由调用方回退原链接。 */
+  function resolveRedirectText(url) {
+    return new Promise(function (resolve, reject) {
+      if (!(window.AppBridge && typeof AppBridge.resolveRedirect === 'function')) {
+        reject(new Error('no bridge'));
+        return;
+      }
+      let settled = false;
+      const finish = function (err, u) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { delete window.__nativeResolved; } catch (_) { window.__nativeResolved = null; }
+        if (err) reject(err); else resolve(u);
+      };
+      window.__nativeResolved = function (payload) {
+        if (!payload || !payload.ok || typeof payload.url !== 'string' || !payload.url) {
+          finish(new Error('resolve failed'));
+          return;
+        }
+        finish(null, payload.url);
+      };
+      const timer = setTimeout(function () { finish(new Error('timeout')); }, 12000);
+      try { AppBridge.resolveRedirect(url); }
+      catch (e) { finish(e); }
+    });
+  }
+
+  /* 抖音短链还原后的地址清洗:iesdouyin 分享页直链剥掉 query(分享签名/
+   * 时间戳等跟踪参数),只留 /share/<note|video>/<id>/ 形态 —— API 实测
+   * 认这个干净形态,历史记录也更可读、不过期。其他形态原样返回。 */
+  function normalizeDouyinShare(u) {
+    const m = typeof u === 'string'
+      && u.match(/^(https:\/\/www\.iesdouyin\.com\/share\/(?:note|video)\/\d+)\/?(?:\?.*)?$/i);
+    return m ? m[1] + '/' : u;
   }
 
   /* API 正常返回时的图文增强:拿不到就 resolve(null),静默走 API 降级。 */
@@ -679,13 +750,18 @@
   }
 
   /* 合成最终 items:笔记页数据优先(无水印原图 + 实况),API images 兜底
-     (webp、无实况)。有笔记页数据时以它为准,API 只补显示缩略图。 */
+     (webp、无实况)。有笔记页数据时以它为准,API 只补显示缩略图。
+     fallback = 预览备选地址:抖音直链按镜像主机随机下发(p3/p9/p11/p26…),
+     个别主机在部分运营商网络不通(真机实测 13 张里恰好 p11 的 2 张预览挂),
+     <img> onerror 时切到 API 代理地址重试一次;XHS 反向同理(代理挂→原图)。 */
   function buildImageItems(apiImgs, noteImgs) {
     if (noteImgs && noteImgs.length) {
       return noteImgs.map(function (n, i) {
         const api = apiImgs[i];
+        const display = (api && api.src) || n.still;
         return {
-          display: (api && api.src) || n.still,
+          display: display,
+          fallback: display !== n.still ? n.still : '',
           still: n.still,
           live: n.isLive,
           liveVideo: n.liveVideo,
@@ -695,7 +771,16 @@
       });
     }
     return (apiImgs || []).map(function (a) {
-      return { display: a.src, still: a.dl || a.src, live: false, liveVideo: '', liveVideoBackup: '', fromNote: false };
+      return {
+        display: a.src,
+        fallback: (a.dl && a.dl !== a.src) ? a.dl : '',
+        /* 下载直链优先:API 代理每次请求都要服务端现解析一次(实测单张
+           7~83s,设备上首次请求还偶发 200+错误体触发坏内容守卫),直链
+           是解析刚返回的签名地址,CDN 直下几秒完成。失败由 download.js
+           的 done 回调自动换代理重试一次。 */
+        still: a.src || a.dl,
+        live: false, liveVideo: '', liveVideoBackup: '', fromNote: false
+      };
     });
   }
 
@@ -708,7 +793,9 @@
     const cells = $('ig-cells');
     cells.innerHTML = items.map(function (it, i) {
       return '<div class="ig-cell">'
-        + '<img src="' + escapeAttr(it.display) + '" alt="" loading="lazy" referrerpolicy="no-referrer"/>'
+        + '<img src="' + escapeAttr(it.display) + '"'
+        + (it.fallback ? ' data-fb="' + escapeAttr(it.fallback) + '"' : '')
+        + ' alt="" loading="lazy" referrerpolicy="no-referrer"/>'
         + '<span class="ig-idx">' + (i + 1) + '</span>'
         + (it.live && it.liveVideo ? '<span class="ig-live">实况</span>' : '')
         + '<button class="ig-dl" data-ig="' + i + '" aria-label="下载第' + (i + 1) + '张">'
@@ -716,6 +803,17 @@
         + '</button>'
         + '</div>';
     }).join('');
+    // 直链镜像主机偶发不通(真机:p11-sign 两张预览挂)→ onerror 换备选
+    // 地址(API 代理/原图)重试一次,两条都挂才放弃
+    cells.querySelectorAll('.ig-cell img').forEach(function (img) {
+      img.addEventListener('error', function () {
+        const fb = img.getAttribute('data-fb');
+        if (fb && img.getAttribute('data-fb-tried') !== '1') {
+          img.setAttribute('data-fb-tried', '1');
+          img.src = fb;
+        }
+      });
+    });
     cells.querySelectorAll('.ig-dl').forEach(function (btn) {
       btn.addEventListener('click', function () {
         App.doDownloadImage(parseInt(btn.getAttribute('data-ig'), 10));
@@ -723,9 +821,14 @@
     });
     $('btn-dl-all').onclick = function () { App.doDownloadAllImages(); };
     const fromNote = items.length > 0 && items[0].fromNote;
-    $('ig-note').textContent = (fromNote
+    // fromNote=false 的两种来源文案不同:小红书是笔记页抓取失败降级,
+    // 抖音本来就是 API 单数据源,不存在「降级」,照搬会误导。
+    const sourceTxt = fromNote
       ? '已通过笔记页获取无水印原图。'
-      : '笔记页不可用,已降级为预览图质量。')
+      : (detectPlatform(data.url || '') === 'douyin'
+        ? '已获取抖音图片。'
+        : '笔记页不可用,已降级为预览图质量。');
+    $('ig-note').textContent = sourceTxt
       + (liveCount ? '实况图将合成动态照片(.jpg),在支持的相册里按住即可播放。' : '');
   }
 

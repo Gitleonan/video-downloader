@@ -35,7 +35,28 @@ if [ "$VARIANT" = "release" ] && [ ! -f keystore.properties ]; then
   exit 1
 fi
 
-./gradlew ":app:assemble${VARIANT^}"
+# Gradle/AGP need JDK 17+. When JAVA_HOME is unset or points at an older JVM
+# (a stock macOS env often carries JDK 8), pick up a 17 via java_home and use
+# it for this build only; elsewhere Gradle reports the mismatch itself.
+need17=1
+if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+  if "$JAVA_HOME/bin/java" -version 2>&1 | head -1 \
+      | grep -Eq 'version "1[7-9]\.|version "[2-9][0-9]\.'; then
+    need17=0
+  fi
+fi
+if [ "$need17" = 1 ] && [ "$(uname -s)" = "Darwin" ] \
+   && [ -x /usr/libexec/java_home ]; then
+  JH17="$(/usr/libexec/java_home -v 17 2>/dev/null || true)"
+  if [ -n "$JH17" ]; then
+    export JAVA_HOME="$JH17"
+    echo "using JDK 17: $JAVA_HOME"
+  fi
+fi
+
+# Capitalize the variant without bash-4 `${VARIANT^}` (macOS ships bash 3.2).
+TASK_VARIANT="$(printf '%s' "$VARIANT" | cut -c1 | tr '[:lower:]' '[:upper:]')${VARIANT#?}"
+./gradlew ":app:assemble$TASK_VARIANT"
 
 APK="app/build/outputs/apk/${VARIANT}/Video Downloader.apk"
 echo

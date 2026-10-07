@@ -453,6 +453,34 @@ public class MainActivity extends AppCompatActivity {
             mainHandler.post(() -> startLivePhotoTask(fStill, fVideo, fBackup, fName));
         }
 
+        /** Douyin share short links (v.douyin.com/…) must be expanded before
+         *  the parse API sees them: the upstream resolves the short link to a
+         *  slideshow's audio track and answers kind=audio, so an image note
+         *  downloads as audio/video instead of the pictures. The expanded
+         *  https://www.iesdouyin.com/share/note/<id>/ URL parses correctly.
+         *  Follows the redirect chain here (page fetch can't see cross-origin
+         *  redirects) and answers window.__nativeResolved({ok, url}); on any
+         *  failure ok=false and the page falls back to the original link. */
+        @JavascriptInterface
+        public void resolveRedirect(String url) {
+            if (!"appassets.androidplatform.net".equals(currentPageHost)) return;
+            if (url == null || url.isEmpty()) return;
+            mainHandler.post(() -> {
+                final String ua = webView != null
+                        ? webView.getSettings().getUserAgentString() : null;
+                new Thread(() -> {
+                    String resolved = null;
+                    try { resolved = followRedirects(url, ua); } catch (Exception ignore) {}
+                    final String fResolved = resolved;
+                    final String js = "window.__nativeResolved && __nativeResolved("
+                            + buildResolvedPayload(fResolved) + ")";
+                    mainHandler.post(() -> {
+                        if (webView != null) webView.evaluateJavascript(js, null);
+                    });
+                }, "resolve-redirect").start();
+            });
+        }
+
         /** Task-bar cancel / pause: kill the DownloadManager row. Pause is
          * page-level state (DownloadManager has no public pause), resume
          * re-enqueues via download(). Byte-level tasks (live photos) are
@@ -674,6 +702,19 @@ public class MainActivity extends AppCompatActivity {
             return o.toString();
         } catch (Exception ignore) {
             return "{\"ok\":false,\"error\":\"payload build failed\"}";
+        }
+    }
+
+    /** {ok:true,url} on success, {ok:false} to make the page keep the
+     * original link. org.json handles all string escaping. */
+    private static String buildResolvedPayload(String url) {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            o.put("ok", url != null);
+            if (url != null) o.put("url", url);
+            return o.toString();
+        } catch (Exception ignore) {
+            return "{\"ok\":false}";
         }
     }
 
@@ -924,10 +965,42 @@ public class MainActivity extends AppCompatActivity {
         return "";
     }
 
+    /** Walks a redirect chain and returns the final URL (headers only — the
+     * response body is never read). Returns null when a hop fails, the chain
+     * outgrows {@code maxHops}, or nothing redirected: the caller treats null
+     * as "keep the original link". */
+    private static String followRedirects(String url, String userAgent) {
+        String current = url;
+        try {
+            for (int hop = 0; hop < 6 && current != null; hop++) {
+                HttpURLConnection conn = (HttpURLConnection) new URL(current).openConnection();
+                try {
+                    conn.setConnectTimeout(10000);
+                    conn.setReadTimeout(10000);
+                    conn.setInstanceFollowRedirects(false);
+                    if (userAgent != null) conn.setRequestProperty("User-Agent", userAgent);
+                    int code = conn.getResponseCode();
+                    if (code >= 300 && code < 400) {
+                        String loc = conn.getHeaderField("Location");
+                        current = loc == null ? null
+                                : new URL(new URL(current), loc).toString();
+                        continue;
+                    }
+                    return current;
+                } finally {
+                    conn.disconnect();
+                }
+            }
+        } catch (Exception e) {
+            android.util.Log.d("GalaxyDL", "resolve redirect failed: " + e);
+            return null;
+        }
+        return null;
+    }
+
     /** GET with a manual redirect loop — HttpURLConnection refuses
      * cross-protocol hops, and xhslink share links redirect https→https plus
-     * the odd http entry point. Body capped at 4 MB (note pages ~200 KB). */
-    private static String httpGetString(String url, String userAgent) throws IOException {
+     * the odd http entry point. Body capped at 4 MB (note pages ~200 KB). */    private static String httpGetString(String url, String userAgent) throws IOException {
         String current = url;
         for (int hop = 0; hop < 5 && current != null; hop++) {
             HttpURLConnection conn = (HttpURLConnection) new URL(current).openConnection();

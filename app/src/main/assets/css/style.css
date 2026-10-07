@@ -1172,26 +1172,126 @@ body { transition: background-color 0.25s ease; }
 .toast.err .t-ico { background: var(--danger-wash); color: var(--danger); }
 
 /* =========================
-   Download task bar
+   Download island: floating dot ⇄ task panel
+   一个容器两套内容层,容器在 52px 圆点与面板之间过渡 width/height/
+   border-radius 形成形状变形;内容层各自锚定右下角、固定设计尺寸,
+   收起过程只被裁剪不回流。z 在 sheet(90) 之上:结果弹窗开着也能
+   点开任务列表。任务清空整体淡出。
    ========================= */
 .taskbar {
-  display: none;
+  --panel-w: min(calc(100vw - 28px), 396px);
+  --panel-h: 300px;
   position: fixed;
-  left: 50%; transform: translateX(-50%);
-  bottom: calc(var(--safe-b) + var(--nav-h) + 16px);
-  width: calc(100% - 36px); max-width: 394px;
-  z-index: 55;   /* above pages, below overlay(80)/sheet(90) */
-  flex-direction: column;
-  gap: 8px;
-}
-.taskbar.show { display: flex; }
-.task {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 12px;
+  right: 14px;
+  bottom: calc(var(--safe-b) + var(--nav-h) + 14px);
+  width: 52px; height: 52px;
+  border-radius: 26px;
+  transform-origin: 100% 100%;
   background: var(--surface);
   border: 1px solid var(--line-2);
-  border-radius: var(--r);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  z-index: 110;   /* above overlay(80)/sheet(90), below toast(120) */
+  opacity: 0; transform: translateY(12px) scale(0.88);
+  pointer-events: none;
+  transition:
+    width 0.4s cubic-bezier(0.3, 0.75, 0.25, 1),
+    height 0.4s cubic-bezier(0.3, 0.75, 0.25, 1),
+    border-radius 0.4s cubic-bezier(0.3, 0.75, 0.25, 1),
+    opacity 0.25s ease, transform 0.3s cubic-bezier(0.3, 0.75, 0.25, 1);
+}
+.taskbar.show { opacity: 1; transform: none; pointer-events: auto; }
+.taskbar.expanded {
+  width: var(--panel-w);
+  height: var(--panel-h);
+  border-radius: 22px;
+}
+
+/* -- collapsed dot layer -- */
+.tb-dot {
+  position: absolute; right: 0; bottom: 0;
+  width: 52px; height: 52px;
+  display: grid; place-items: center;
+  cursor: pointer;
+  opacity: 1;
+  transition: opacity 0.14s ease;
+}
+.taskbar.expanded .tb-dot { opacity: 0; pointer-events: none; }
+.tb-ring {
+  position: absolute; inset: 3px;
+  transform: rotate(-90deg);
+}
+.taskbar.indet .tb-ring { animation: spin 1.15s linear infinite; }
+.tb-ring circle { fill: none; stroke-width: 3; }
+.tb-ring .ring-bg { stroke: var(--surface-3); }
+.tb-ring .ring-fg {
+  stroke: var(--accent); stroke-linecap: round;
+  stroke-dasharray: 119.38;               /* 2π·19 */
+  stroke-dashoffset: 119.38;
+  transition: stroke-dashoffset 0.45s ease;
+}
+.taskbar.indet .tb-ring .ring-fg {
+  stroke-dasharray: 42 77.38; stroke-dashoffset: 0;
+  transition: none;
+}
+.tb-ico { width: 19px; height: 19px; color: var(--text-2); margin-top: 1px; }
+.tb-count {
+  position: absolute; top: 4px; right: 4px;
+  min-width: 15px; height: 15px; padding: 0 4px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 9.5px; font-weight: 800; line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* -- expanded panel layer (fixed design size, anchored bottom-right:
+      collapsed morph clips it instead of reflowing) -- */
+.tb-panel {
+  position: absolute; right: 0; bottom: 0;
+  width: var(--panel-w); height: var(--panel-h);
+  display: flex; flex-direction: column;
+  opacity: 0; transform: scale(0.97);
+  pointer-events: none;
+  transition: opacity 0.14s ease;
+}
+.taskbar.expanded .tb-panel {
+  opacity: 1; transform: none;
+  pointer-events: auto;
+  transition: opacity 0.2s ease 0.14s, transform 0.34s cubic-bezier(0.3, 0.75, 0.25, 1) 0.14s;
+}
+.tb-head {
+  flex: 0 0 46px;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--line-2);
+}
+.tb-title { font-size: 13px; font-weight: 700; color: var(--text); }
+.tb-close {
+  width: 32px; height: 32px;
+  border-radius: 10px;
+  display: grid; place-items: center;
+  background: var(--surface-2);
+  color: var(--text-2);
+  transition: transform 0.12s ease;
+}
+.tb-close:active { transform: scale(0.92); }
+.tb-close svg { width: 15px; height: 15px; }
+.tb-list {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.task {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
 }
 .task .t-main { flex: 1; min-width: 0; }
 .task .t-name {
