@@ -471,17 +471,22 @@
 
   /* images 元素两种形态都要吃:OpenAPI 声明 string[],实测是
      {index,url,downloadUrl} 对象数组(参考前端 types.ts 印证)。归一化成
-     {src: 显示用, dl: 下载用}。 */
+     {src: 显示用, dl: 下载用, orig: 还原的无水印原图(可能为空)}。url 是
+     image-proxy 包裹的 webpic 渲染版(右下角水印),内层查询参数里藏着
+     可还原 fileId 的原始地址,拆出来供兜底升级。 */
   function normalizeImages(images) {
     return (images || []).map(function (v) {
-      if (typeof v === 'string') return { src: v, dl: v }
-      if (v && typeof v === 'object') {
-        const src = (typeof v.url === 'string' && v.url) ? v.url : '';
-        const dl = (typeof v.downloadUrl === 'string' && v.downloadUrl) ? v.downloadUrl : src;
-        return { src: src, dl: dl };
-      }
-      return null;
-    }).filter(Boolean).filter(function (x) { return !!x.src; });
+      let src = '';
+      if (typeof v === 'string') src = v;
+      else if (v && typeof v === 'object') src = (typeof v.url === 'string' && v.url) ? v.url : '';
+      if (!src) return null;
+      const dl = (v && typeof v === 'object' && typeof v.downloadUrl === 'string' && v.downloadUrl)
+        ? v.downloadUrl : src;
+      // image-proxy?url=<内层>;内层即 webpic 渲染地址,按存储路径还原原图
+      let inner = '';
+      try { inner = (new URL(src)).searchParams.get('url') || ''; } catch (_) { inner = ''; }
+      return { src: src, dl: dl, orig: xhsOriginalFromUrl(inner) || xhsOriginalFromUrl(src) };
+    }).filter(Boolean);
   }
 
   /* __INITIAL_STATE__ 是 JS 对象字面量而非纯 JSON:实测含裸 undefined
@@ -560,6 +565,30 @@
       ? 'https://' + u.slice(7) : u;
   }
 
+  /* 从任一 xhscdn 地址还原存档原图。webpic 渲染地址形如
+     https://sns-webpic-qc.xhscdn.com/<时间戳>/<签名>/<存储路径>!<渲染后缀>
+     (后缀如 nd_dft_wlteh_webp_3,带右下角水印且 ≤1080,实测反馈),其中
+     <存储路径> 与水合 state 的 fileId 完全一致(实测含 notes_pre_post/、
+     note_pre_post_uhdr/ 目录前缀)。剥掉时间戳/签名与后缀、换 sns-img 主机,
+     即得无签名、不过期、无水印的存档原图。解析 API 返回的代理地址内层同为
+     webpic 形态,所以这条还原不依赖笔记页抓取 —— 抓取被风控挡掉时,
+     API 兜底图也能借此升回原图。识别不出还原点时返回空串。 */
+  function xhsOriginalFromUrl(u) {
+    if (typeof u !== 'string' || !u) return '';
+    const m = u.match(/\/\/sns-(?:webpic|img)[^/]*\.xhscdn\.com\/([^?#]+)/);
+    if (!m) return '';
+    let path = m[1];
+    const bang = path.indexOf('!');
+    if (bang >= 0) path = path.slice(0, bang);
+    const seg = path.split('/');
+    // webpic 前两段是 <时间戳>/<32位hex签名>;sns-img 直链没有这两段
+    if (seg.length >= 3 && /^\d{10,}$/.test(seg[0]) && /^[0-9a-f]{32}$/i.test(seg[1])) {
+      seg.splice(0, 2);
+      path = seg.join('/');
+    }
+    return path ? 'https://sns-img-qc.xhscdn.com/' + path : '';
+  }
+
   /* PC 端水合的 imageList[i].url 可能是空串(真机/浏览器实测),可渲染的
      地址只在 infoList 里(WB_PRV/WB_DFT 两个场景,默认渲染用 WB_DFT)。
      取 WB_DFT,没有就取最后一个非空项,作为静帧兜底。 */
@@ -589,7 +618,10 @@
     if (fid) return 'https://sns-img-qc.xhscdn.com/' + fid;
     const u = httpsify((typeof it.url === 'string' && it.url) || '');
     if (u && u.indexOf('sns-img') >= 0) return u;
-    return u || httpsify(infoListStill(it));
+    // infoList 渲染版兜底也要先做原图还原(它的 webpic 地址就带 fileId),
+    // 还原不出才用渲染版原样(有水印,但至少能下)
+    return xhsOriginalFromUrl(httpsify(infoListStill(it)))
+      || u || httpsify(infoListStill(it));
   }
 
   /* 归一化 __INITIAL_STATE__ 的 imageList → [{still, liveVideo, isLive}]。
@@ -660,7 +692,11 @@
         }
         finish(null, payload.html);
       };
-      const timer = setTimeout(function () { finish(new Error('timeout')); }, 12000);
+      // 必须宽于原生侧的整个预算:静态抓取失败后原生会退到离屏渲染
+      // (加载 22s + 轮询 14×1s)。只给 12s 的话,水合慢于 12s 的设备
+      // (弱网/低端机)页面先放弃,静默降级成 API 水印渲染图 —— 真机
+      // 「图文又有水印又不清晰」的成因之一。26s 覆盖原生全部路径。
+      const timer = setTimeout(function () { finish(new Error('timeout')); }, 26000);
       try { AppBridge.fetchNoteHtml(noteUrl); }
       catch (e) { finish(e); }
     });
@@ -749,19 +785,21 @@
     return { data: data, noteImgs: noteImgs };
   }
 
-  /* 合成最终 items:笔记页数据优先(无水印原图 + 实况),API images 兜底
-     (webp、无实况)。有笔记页数据时以它为准,API 只补显示缩略图。
+  /* 合成最终 items:笔记页数据优先(无水印原图 + 实况),API images 兜底。
+     兜底也不再将就渲染版:API 代理地址内层携带 fileId,先还原成 sns-img
+     原图直链作下载/显示地址,代理地址降为备用通道 —— 预览 onerror 与
+     下载失败各有一次自动切换。还原不出(极老形态)才原样用代理地址。
      fallback = 预览备选地址:抖音直链按镜像主机随机下发(p3/p9/p11/p26…),
      个别主机在部分运营商网络不通(真机实测 13 张里恰好 p11 的 2 张预览挂),
-     <img> onerror 时切到 API 代理地址重试一次;XHS 反向同理(代理挂→原图)。 */
+     <img> onerror 时切到备选重试一次;XHS 反向同理(直链挂→代理)。 */
   function buildImageItems(apiImgs, noteImgs) {
     if (noteImgs && noteImgs.length) {
       return noteImgs.map(function (n, i) {
         const api = apiImgs[i];
-        const display = (api && api.src) || n.still;
+        const display = n.still || (api && api.src) || '';
         return {
           display: display,
-          fallback: display !== n.still ? n.still : '',
+          fallback: (api && api.src && api.src !== display) ? api.src : '',
           still: n.still,
           live: n.isLive,
           liveVideo: n.liveVideo,
@@ -771,14 +809,17 @@
       });
     }
     return (apiImgs || []).map(function (a) {
+      const proxy = a.src || a.dl;
+      const orig = a.orig || '';
+      const main = orig || proxy;
       return {
-        display: a.src,
-        fallback: (a.dl && a.dl !== a.src) ? a.dl : '',
+        display: main,
+        fallback: main !== proxy ? proxy : ((a.dl && a.dl !== a.src) ? a.dl : ''),
         /* 下载直链优先:API 代理每次请求都要服务端现解析一次(实测单张
            7~83s,设备上首次请求还偶发 200+错误体触发坏内容守卫),直链
-           是解析刚返回的签名地址,CDN 直下几秒完成。失败由 download.js
+           是无签名存档原图,CDN 直下几秒完成。失败由 download.js
            的 done 回调自动换代理重试一次。 */
-        still: a.src || a.dl,
+        still: main,
         live: false, liveVideo: '', liveVideoBackup: '', fromNote: false
       };
     });
@@ -821,13 +862,20 @@
     });
     $('btn-dl-all').onclick = function () { App.doDownloadAllImages(); };
     const fromNote = items.length > 0 && items[0].fromNote;
+    // 兜底路径也可能已还原成无水印原图(API 地址内层藏 fileId),看结果
+    // 说话;真降级到渲染版才说「预览图质量」。
+    const allClean = items.length > 0 && items.every(function (x) {
+      return String(x.still || '').indexOf('sns-img') >= 0;
+    });
     // fromNote=false 的两种来源文案不同:小红书是笔记页抓取失败降级,
     // 抖音本来就是 API 单数据源,不存在「降级」,照搬会误导。
     const sourceTxt = fromNote
       ? '已通过笔记页获取无水印原图。'
-      : (detectPlatform(data.url || '') === 'douyin'
-        ? '已获取抖音图片。'
-        : '笔记页不可用,已降级为预览图质量。');
+      : (allClean
+        ? '已获取无水印原图。'
+        : (detectPlatform(data.url || '') === 'douyin'
+          ? '已获取抖音图片。'
+          : '笔记页不可用,已降级为预览图质量。'));
     $('ig-note').textContent = sourceTxt
       + (liveCount ? '实况图将合成动态照片(.jpg),在支持的相册里按住即可播放。' : '');
   }

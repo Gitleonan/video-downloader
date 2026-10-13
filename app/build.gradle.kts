@@ -24,8 +24,8 @@ android {
         applicationId = "com.galaxy.downloader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "2.14"
+        versionCode = 26
+        versionName = "2.16"
     }
 
     signingConfigs {
