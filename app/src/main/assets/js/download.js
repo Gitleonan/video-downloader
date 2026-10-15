@@ -4,8 +4,17 @@
 (function () {
   'use strict';
 
-  function sanitizeFilename(name) {
-    return (name || 'video').replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').slice(0, 80);
+  /* 文件名上限 80 字。keep 是必须原样保留的尾巴(扩展名 / 第 N 张的 -N):
+     截断只能作用在标题上 —— 先拼接再截断的话,长标题会把尾巴一起切掉。
+     Instagram 的 title 是整段帖子简介(实测 560 字),不这样切就会落盘成
+     无后缀文件(相册拿不到 MIME、打不开,与 # 那条坑同类)或 5 张图同名。 */
+  function sanitizeFilename(name, keep) {
+    const clean = function (s) {
+      return String(s == null ? '' : s).replace(/[<>:"/\\|?*\x00-\x1f]/g, '-');
+    };
+    const tail = clean(keep);
+    const head = clean(name).slice(0, Math.max(1, 80 - tail.length));
+    return (head || 'media') + tail;
   }
 
   function hasSrc(u) {
@@ -205,7 +214,7 @@
       it._triedFallback = true;
       const alt = it.fallback;
       if (!alt || dlTasks[alt]) return false;
-      const filename = App.sanitizeFilename(noteTitle(data) + '-' + (i + 1))
+      const filename = App.sanitizeFilename(noteTitle(data), '-' + (i + 1))
         + imageItemExt(it);
       // 重试行以备用地址为新键注册(原生事件按下载地址回报),文件名不变
       dlTasks[alt] = { name: filename, state: 'running', cur: 0, total: -1 };
@@ -320,7 +329,7 @@
       // URI fragment), leaving extension-less files. Strip hashtags BEFORE
       // appending the extension.
       const rawTitle = (data.title || '').replace(/#[^\s#]+/g, ' ').trim() || 'video';
-      const filename = sanitizeFilename(rawTitle + (kind === 'video' ? '.mp4' : '.mp3'));
+      const filename = sanitizeFilename(rawTitle, kind === 'video' ? '.mp4' : '.mp3');
       if (window.AppBridge && typeof AppBridge.download === 'function') {
         // Native path: DownloadManager + progress events + completion dialog.
         // Anchors with target=_blank are unreliable inside WebView for CDN
@@ -398,7 +407,7 @@
   /* 笔记页来源是真 JPEG(实测 3024×4032 JFIF);API 来源是代理重写的
      webp。扩展名跟着来源走,原生魔数校验两条路都放行。 */
   function imageItemExt(it) {
-    return it.fromNote ? '.jpg' : '.webp';
+    return it.ext || (it.fromNote ? '.jpg' : '.webp');
   }
 
   function triggerAnchorDownload(url, filename) {
@@ -418,7 +427,7 @@
     const it = items && items[index];
     if (!data || !it) return;
 
-    const base = App.sanitizeFilename(noteTitle(data) + '-' + (index + 1));
+    const base = App.sanitizeFilename(noteTitle(data), '-' + (index + 1));
 
     if (it.live && it.liveVideo) {
       if (dlTasks[it.still]) { App.showToast('该图已在下载列表'); return; }

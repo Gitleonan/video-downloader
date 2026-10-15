@@ -1,6 +1,6 @@
 # Video Downloader
 
-把单页 H5 应用打包成安卓 APK 的 WebView 壳工程。应用名「Video Downloader」,支持解析/下载抖音、小红书、哔哩哔哩的视频与音频,支持**抖音图文笔记的图片下载**,并支持小红书**图文笔记的无水印原图与实况图(Live Photo)下载**。
+把单页 H5 应用打包成安卓 APK 的 WebView 壳工程。应用名「Video Downloader」,支持解析/下载抖音、小红书、哔哩哔哩、YouTube、X、Instagram 的视频与音频,支持**抖音图文笔记的图片下载**,支持小红书**图文笔记的无水印原图与实况图(Live Photo)下载**,并支持 **Instagram 视频帖与图片帖**。
 
 <img src="demo.jpg" alt="Video Downloader 首页(日间模式)" width="330">
 
@@ -120,6 +120,18 @@ Git Bash / Linux 下用 `./scripts/serve.sh [端口]`。
 - 粘贴抖音图文笔记链接(`iesdouyin.com/share/note/…`、`douyin.com/note/…` 或分享短链)即出图片网格,逐张保存或一键「全部下载」,与小红书图文同一套交互;图片来自解析服务(douyinpic 全分辨率、无水印),存 `Pictures/Video Downloader/`
 - 解析服务对抖音图文是唯一数据源(分享页匿名是水合空壳,无直取路径);图文网格不走笔记页增强,解析即出结果
 - **解析兜底**:解析服务故障时自动改为直接抓取笔记页获取标题/原图/实况;页面被风控拦截时降级为离屏渲染(让小红书自己的页面脚本完成数据水合);笔记被作者删除时如实提示「原文已失效」,不再笼统报错
+
+### Instagram
+
+- 粘贴 Reels / 视频帖 / 图片帖链接即可解析:`instagram.com/reel|p|tv/<id>/` 与分享形态 `instagram.com/share/<kind>/<id>/`、旧域名 `instagr.am` 都认;分享链交给解析服务前先在页面侧还原成标准形态并剥掉 `igsh` 跟踪参数(`/share/reel/…` 形态实测会被解析 API 判 BAD_REQUEST,`/reel/…` 正常)
+- 视频帖走「下载视频 / 提取音频」,与其它平台同一套交互;图片帖与纯图轮播出图片网格,逐张保存或一键「全部下载」,存 `Pictures/Video Downloader/`
+- **预览与下载都走解析服务的转发地址**:Instagram 的媒体 CDN(`scontent.cdninstagram.com`)在大陆网络整域不可达(实测本机 scontent / instagram.com / google 全部不通,只有解析 API 通),直链降为备用通道;视频预览同理优先走转发地址
+- 封面取自解析服务的转发域名;万一载不出会回退成品牌渐变占位,历史列表里同样不留破图
+
+已知边界:
+
+- **混合轮播(同帖既有图又有视频)不拆分**:解析服务对这类帖按视频返回,只能下到其中那一个视频
+- 私密账号 / 需登录内容不保证可解析(Instagram 侧的登录墙,解析服务无 cookie)
 
 ## 目录结构
 

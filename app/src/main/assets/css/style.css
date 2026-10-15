@@ -1,17 +1,20 @@
 /* ==========================================================================
-   Video Downloader — "纸墨 / Paper & Ink" design system
+   Video Downloader — "软糖 / Gummy" design system
    --------------------------------------------------------------------------
-   Light-first, precision-utility aesthetic: cool paper surfaces, ink-black
-   type, hairline rules doing the work that cards and shadows used to do, and
-   exactly ONE accent (a deep jade green) carrying every interactive state.
+   Soft-consumer aesthetic: a lilac-tinted white field, white gummy cards on
+   generous 20–28px radii, and soft violet-tinted shadows doing the work that
+   hairline rules used to do — grouping comes from cards and gaps, not lines.
 
    The colour rule this file obeys, in one line:
-     ink    = actions   (primary buttons are solid ink, never coloured)
-     jade   = state     (selection, focus, progress, data, active nav)
-     paper  = surface   (boxes are outlined, not floated)
-   Platform brand hues appear ONLY as the 7px identity dot inside result
-   meta pills (those hexes live in js/app.js PLATFORM_META), so the page never
-   fights itself with four competing brand colours.
+     grape  = actions   (primary buttons, selection, focus, progress, nav)
+     brand  = identity  (platform hues appear openly — chips, the detected
+                         state, the 7px dot inside result meta pills)
+     white  = surface   (cards float on the field; nothing is outlined)
+
+   Signature: the composer answers the link you paste. The moment a platform
+   is recognised, the whole card — border, glow and parse button — takes that
+   platform's brand colour (.composer.detect-*). It is the one loud moment on
+   the screen; everything around it stays quiet.
 
    Geometry contract with the JS (do not change without re-reading app.js):
      - #paste-card is sticky and its `top` consumes --pin-top, which app.js
@@ -42,45 +45,62 @@
 :root {
   color-scheme: light;
 
-  /* ---- surfaces: cool paper, never warm cream ---- */
-  --bg:        #F6F7F9;
-  --bg-sink:   #EBEDF1;
+  /* ---- surfaces: lilac-tinted white, never warm cream ---- */
+  --bg:        #F5F4FA;
+  --bg-sink:   #EAE8F2;
   --surface:   #FFFFFF;
-  --surface-2: #F2F4F7;
-  --surface-3: #E8EBF0;
-  --line:      #E2E5EA;
-  --line-2:    #CBD1DA;
+  --surface-2: #F2F1F8;
+  --surface-3: #E7E5F1;
+  --line:      #ECEAF4;
+  --line-2:    #D8D4E8;
 
   /* ---- text ---- */
-  --text:   #15171B;
-  --text-2: #59606E;
-  --text-3: #868D9B;
+  --text:   #1C1A26;
+  --text-2: #6A6680;
+  --text-3: #9894AB;
 
-  /* ---- accent: jade. One accent, used for every state on the page. ---- */
-  --accent:        #0B7F5C;
-  --accent-ink:    #0B7F5C;                  /* accent as text on paper */
-  --accent-wash:   rgba(11, 127, 92, 0.08);
-  --accent-wash-2: rgba(11, 127, 92, 0.16);
+  /* ---- accent: grape violet. Actions, selection, focus, progress. ---- */
+  --accent:        #6C5CE7;
+  --accent-ink:    #5B4BD6;                  /* accent as text on white */
+  --accent-wash:   rgba(108, 92, 231, 0.10);
+  --accent-wash-2: rgba(108, 92, 231, 0.20);
   --on-accent:     #FFFFFF;
 
-  /* ---- solid actions: ink. Inverts to near-white in dark mode. ---- */
-  --solid:    #15171B;
-  --on-solid: #F6F7F9;
+  /* ---- solid actions: ink. Kept for the rare high-emphasis control. ---- */
+  --solid:    #1C1A26;
+  --on-solid: #F5F4FA;
 
-  --danger:      #B3261E;
-  --danger-wash: rgba(179, 38, 30, 0.08);
-  --ok:          #0B7F5C;
-  --ok-wash:     rgba(11, 127, 92, 0.10);
+  --danger:      #E5484D;
+  --danger-wash: rgba(229, 72, 77, 0.10);
+  --ok:          #12B76A;
+  --ok-wash:     rgba(18, 183, 106, 0.12);
 
-  /* ---- shape: two container radii + pills. Documented, then obeyed. ---- */
-  --r:      8px;    /* every box, button, input, tile, list row */
-  --r-lg:   14px;   /* sheets and the video preview only */
+  /* ---- platform brand hues. Used openly: chips, the detected state, and
+     the identity dot inside result meta pills (app.js PLATFORM_META). ---- */
+  --p-douyin:      #FF3D67;
+  --p-xiaohongshu: #FF5A4D;
+  --p-bilibili:    #38A9F0;
+  --p-youtube:     #FF0033;
+  --p-x:           #1C1A26;
+  --p-instagram:   #E1306C;
+  --p-douyin-glow:      rgba(255, 61, 103, 0.30);
+  --p-xiaohongshu-glow: rgba(255, 90, 77, 0.30);
+  --p-bilibili-glow:    rgba(56, 169, 240, 0.30);
+  --p-youtube-glow:     rgba(255, 0, 51, 0.30);
+  --p-x-glow:           rgba(28, 26, 38, 0.26);
+  --p-instagram-glow:   rgba(225, 48, 108, 0.30);
+
+  /* ---- shape: gummy. Big radii, three steps, then obeyed. ---- */
+  --r-sm:   12px;   /* icon buttons, small tiles, inner chips */
+  --r:      20px;   /* every card, button, input, list row */
+  --r-lg:   28px;   /* sheets, the video preview, big panels */
   --r-full: 999px;  /* chips, tags, badges, toast */
 
-  /* ---- elevation: whisper only. Structure comes from hairlines. ---- */
-  --shadow-sm: 0 1px 2px rgba(16, 20, 28, 0.05);
-  --shadow-md: 0 2px 8px rgba(16, 20, 28, 0.07);
-  --shadow-lg: 0 16px 40px rgba(16, 20, 28, 0.16);
+  /* ---- elevation: soft and violet-tinted, never grey. ---- */
+  --shadow-sm: 0 2px 8px rgba(40, 32, 90, 0.06);
+  --shadow-md: 0 8px 24px rgba(40, 32, 90, 0.10);
+  --shadow-lg: 0 18px 44px rgba(40, 32, 90, 0.18);
+  --shadow-accent: 0 8px 22px rgba(108, 92, 231, 0.32);
 
   /* ---- layout ---- */
   --nav-h: 56px;
@@ -97,40 +117,45 @@
 }
 
 /* =========================
-   Dark theme — graphite ink, not the old navy glass
+   Dark theme — grape on near-black plum
    ========================= */
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --bg:        #101214;
-  --bg-sink:   #0A0B0D;
-  --surface:   #17191D;
-  --surface-2: #1E2126;
-  --surface-3: #262A31;
-  --line:      #2A2F36;
-  --line-2:    #3C434D;
+  --bg:        #121019;
+  --bg-sink:   #0C0A12;
+  --surface:   #1B1826;
+  --surface-2: #241F32;
+  --surface-3: #2E2840;
+  --line:      #302A42;
+  --line-2:    #453C5E;
 
-  --text:   #ECEEF1;
-  --text-2: #9AA2AF;
-  --text-3: #6E7885;
+  --text:   #F0EEF7;
+  --text-2: #A8A2C0;
+  --text-3: #7A7391;
 
-  --accent:        #35C99A;
-  --accent-ink:    #35C99A;
-  --accent-wash:   rgba(53, 201, 154, 0.13);
-  --accent-wash-2: rgba(53, 201, 154, 0.24);
-  --on-accent:     #04241A;
+  --accent:        #9B8CFF;
+  --accent-ink:    #A99BFF;
+  --accent-wash:   rgba(155, 140, 255, 0.16);
+  --accent-wash-2: rgba(155, 140, 255, 0.28);
+  --on-accent:     #17122B;
 
-  --solid:    #ECEEF1;
-  --on-solid: #101214;
+  --solid:    #F0EEF7;
+  --on-solid: #121019;
 
-  --danger:      #FF7A70;
-  --danger-wash: rgba(255, 122, 112, 0.12);
-  --ok:          #35C99A;
-  --ok-wash:     rgba(53, 201, 154, 0.12);
+  --danger:      #FF6B6F;
+  --danger-wash: rgba(255, 107, 111, 0.14);
+  --ok:          #35D08A;
+  --ok-wash:     rgba(53, 208, 138, 0.16);
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40);
-  --shadow-md: 0 2px 10px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.60);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.34);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.46);
+  --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.62);
+  --shadow-accent: 0 8px 22px rgba(108, 92, 231, 0.40);
+
+  /* X's brand black disappears on a dark card; flip it to near-white. */
+  --p-x: #F0EEF7;
+  --p-x-glow: rgba(240, 238, 247, 0.22);
 }
 
 /* =========================
@@ -199,14 +224,13 @@ body { transition: background-color 0.25s ease; }
   padding: calc(14px + var(--safe-t)) 18px 10px;
   flex-shrink: 0;
   background: var(--bg);
-  border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .brand-mark {
-  width: 34px; height: 34px; border-radius: var(--r);
+  width: 36px; height: 36px; border-radius: var(--r-sm);
   flex-shrink: 0;
   overflow: hidden;
-  box-shadow: 0 0 0 1px var(--line-2);
+  box-shadow: var(--shadow-sm);
 }
 .brand-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .brand-title {
@@ -232,14 +256,14 @@ body { transition: background-color 0.25s ease; }
 
 .bar-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
 .icon-btn {
-  width: 34px; height: 34px; border-radius: var(--r);
+  width: 36px; height: 36px; border-radius: var(--r-sm);
   display: grid; place-items: center;
   color: var(--text-2);
-  background: transparent;
-  border: 1px solid var(--line);
-  transition: background 0.16s, color 0.16s, border-color 0.16s, transform 0.12s;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  transition: background 0.16s, color 0.16s, box-shadow 0.16s, transform 0.12s;
 }
-.icon-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--line-2); }
+.icon-btn:hover { background: var(--surface-2); color: var(--text); }
 .icon-btn:active { transform: scale(0.94); }
 .icon-btn svg { width: 17px; height: 17px; }
 
@@ -309,6 +333,11 @@ body { transition: background-color 0.25s ease; }
   max-height: 60px;
   transition: max-height 0.28s linear, opacity 0.28s linear, margin 0.28s linear;
 }
+/* 右边还有被裁的芯片时,右边缘渐隐提示可横向滑动(由 app.js 切换) */
+.chip-row.has-more {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 26px), transparent);
+}
 #page-home.docked .chip-row {
   max-height: 0;
   opacity: 0;
@@ -318,22 +347,40 @@ body { transition: background-color 0.25s ease; }
 .chip {
   flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  height: 32px; padding: 0 14px;
+  gap: 7px;
+  height: 34px; padding: 0 15px;
   border-radius: var(--r-full);
-  background: transparent;
-  border: 1px solid var(--line-2);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
   color: var(--text-2);
-  font-size: 12.5px; font-weight: 600;
-  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  font-size: 12.5px; font-weight: 650;
+  transition: color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
   white-space: nowrap;
 }
-.chip:hover { background: var(--surface-2); color: var(--text); }
-.chip.on {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+/* Each chip carries its platform's brand hue as a small dot, so the row reads
+   as a set of platforms rather than a row of identical filters. Selecting one
+   fills the whole pill with that hue — the loud moment, spent in one place. */
+.chip::before {
+  content: '';
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--chip-hue, var(--text-3));
+  flex-shrink: 0;
 }
-.chip.on:hover { background: var(--accent); }
+.chip[data-p="all"]::before { display: none; }
+.chip[data-p="douyin"]      { --chip-hue: var(--p-douyin);      --chip-glow: var(--p-douyin-glow); }
+.chip[data-p="xiaohongshu"] { --chip-hue: var(--p-xiaohongshu); --chip-glow: var(--p-xiaohongshu-glow); }
+.chip[data-p="bilibili"]    { --chip-hue: var(--p-bilibili);    --chip-glow: var(--p-bilibili-glow); }
+.chip[data-p="youtube"]     { --chip-hue: var(--p-youtube);     --chip-glow: var(--p-youtube-glow); }
+.chip[data-p="x"]           { --chip-hue: var(--p-x);           --chip-glow: var(--p-x-glow); }
+.chip[data-p="instagram"]   { --chip-hue: var(--p-instagram);   --chip-glow: var(--p-instagram-glow); }
+.chip:hover { color: var(--text); box-shadow: var(--shadow-md); }
+.chip:active { transform: scale(0.96); }
+.chip.on {
+  background: var(--chip-hue, var(--accent));
+  color: var(--on-accent);
+  box-shadow: 0 6px 16px var(--chip-glow, var(--shadow-accent));
+}
+.chip.on::before { background: rgba(255, 255, 255, 0.9); }
 
 /* =========================
    Composer — the signature
@@ -342,23 +389,50 @@ body { transition: background-color 0.25s ease; }
 .composer {
   margin-top: 14px;
   background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--r);
+  border: 2px solid transparent;
+  border-radius: var(--r-lg);
   padding: 4px;
+  box-shadow: var(--shadow-md);
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 .composer:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-wash);
+  box-shadow: var(--shadow-md), 0 0 0 4px var(--accent-wash);
 }
-/* A recognised link tints the composer. Same accent as focus by design: the
-   single-accent rule means "we see something" reads as one colour, and the
-   detected strip below names the platform explicitly. */
+/* SIGNATURE. A recognised link repaints the whole card in that platform's
+   brand hue — border, glow, the "已识别" tag and the parse button, all at
+   once. It is the one loud moment on the screen, and it names the platform
+   before you press anything. */
+.composer.detect-douyin      { --detect: var(--p-douyin);      --detect-glow: var(--p-douyin-glow); }
+.composer.detect-xiaohongshu { --detect: var(--p-xiaohongshu); --detect-glow: var(--p-xiaohongshu-glow); }
+.composer.detect-bilibili    { --detect: var(--p-bilibili);    --detect-glow: var(--p-bilibili-glow); }
+.composer.detect-youtube     { --detect: var(--p-youtube);     --detect-glow: var(--p-youtube-glow); }
+.composer.detect-x           { --detect: var(--p-x);           --detect-glow: var(--p-x-glow); }
+.composer.detect-instagram   { --detect: var(--p-instagram);   --detect-glow: var(--p-instagram-glow); }
 .composer.detect-douyin,
 .composer.detect-xiaohongshu,
-.composer.detect-bilibili {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-wash);
+.composer.detect-bilibili,
+.composer.detect-youtube,
+.composer.detect-x,
+.composer.detect-instagram {
+  border-color: var(--detect);
+  box-shadow: var(--shadow-md), 0 0 0 4px var(--detect-glow);
+}
+.composer.detect-douyin .send-btn,
+.composer.detect-xiaohongshu .send-btn,
+.composer.detect-bilibili .send-btn,
+.composer.detect-youtube .send-btn,
+.composer.detect-instagram .send-btn {
+  background: var(--detect);
+  color: #FFFFFF;
+  box-shadow: 0 6px 18px var(--detect-glow);
+}
+/* X's brand is monochrome, so its button follows the ink token instead of a
+   hue — that also keeps the label legible when --p-x flips in dark mode. */
+.composer.detect-x .send-btn {
+  background: var(--solid);
+  color: var(--on-solid);
+  box-shadow: var(--shadow-md);
 }
 
 /* Docks to the top while browsing the lower page. --pin-top is computed
@@ -387,13 +461,14 @@ body { transition: background-color 0.25s ease; }
   font-size: 11.5px; font-weight: 650;
   letter-spacing: 0.2px;
   color: var(--text-2);
+  white-space: nowrap;
 }
 .composer-label .live {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--accent);
   flex-shrink: 0;
 }
-.composer-hint { font-size: 10.5px; font-weight: 500; color: var(--text-3); }
+.composer-hint { font-size: 10.5px; font-weight: 500; color: var(--text-3); white-space: nowrap; }
 
 .link-input {
   display: block;
@@ -418,24 +493,24 @@ body { transition: background-color 0.25s ease; }
 .composer-tools { display: flex; gap: 6px; flex: 1; min-width: 0; }
 .tool-btn {
   display: inline-flex; align-items: center; gap: 6px;
-  height: 36px; padding: 0 12px;
-  border-radius: var(--r);
-  border: 1px solid var(--line);
-  background: transparent;
+  height: 36px; padding: 0 13px;
+  border-radius: var(--r-full);
+  background: var(--surface-2);
   color: var(--text-2);
-  font-size: 12.5px; font-weight: 600;
-  transition: background 0.16s, color 0.16s, border-color 0.16s, transform 0.12s;
+  font-size: 12.5px; font-weight: 650;
+  transition: background 0.16s, color 0.16s, transform 0.12s;
   white-space: nowrap;
 }
-.tool-btn:hover { background: var(--surface-2); color: var(--text); border-color: var(--line-2); }
+.tool-btn:hover { background: var(--surface-3); color: var(--text); }
 .tool-btn:active { transform: scale(0.97); }
 .tool-btn svg { width: 14px; height: 14px; }
 
-/* Primary action: solid ink, never coloured. Jade is reserved for state. */
+/* Primary action: ink by default; a recognised link hands the fill over to
+   the platform hue (see .composer.detect-*). */
 .send-btn {
   height: 36px;
   padding: 0 15px 0 13px;
-  border-radius: var(--r);
+  border-radius: var(--r-full);
   background: var(--solid);
   color: var(--on-solid);
   display: inline-flex; align-items: center; gap: 6px;
@@ -444,6 +519,7 @@ body { transition: background-color 0.25s ease; }
   flex-shrink: 0;
   position: relative;
   overflow: hidden;
+  white-space: nowrap;
   transition: transform 0.14s ease, opacity 0.18s ease;
 }
 .send-btn:hover { opacity: 0.88; }
@@ -457,9 +533,8 @@ body { transition: background-color 0.25s ease; }
   display: none;
   align-items: center; gap: 9px;
   padding: 9px 11px;
-  border-radius: var(--r);
+  border-radius: var(--r-sm);
   background: var(--surface-2);
-  border: 1px solid var(--line);
   font-size: 12px;
   color: var(--text-2);
   max-height: 90px;
@@ -479,9 +554,9 @@ body { transition: background-color 0.25s ease; }
   display: inline-flex; align-items: center;
   padding: 3px 9px; border-radius: var(--r-full);
   font-size: 11px; font-weight: 700;
-  background: var(--accent);
+  background: var(--detect, var(--accent));
   color: var(--on-accent);
-  flex-shrink: 0;
+  white-space: nowrap; flex-shrink: 0;
 }
 .detected .url {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -489,20 +564,22 @@ body { transition: background-color 0.25s ease; }
 }
 
 /* =========================
-   Stats — hairline-divided
-   columns, no cards
+   Stats — three gummy tiles
    ========================= */
 .stat-row {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
   margin-top: 20px;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
 }
-.stat { padding: 14px 0; }
-.stat + .stat { border-left: 1px solid var(--line); padding-left: 14px; }
+.stat {
+  padding: 14px 12px;
+  background: var(--surface);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-sm);
+}
 .stat .num {
-  font-size: 21px; font-weight: 700;
+  font-size: 21px; font-weight: 800;
   letter-spacing: -0.5px;
   color: var(--text);
   font-variant-numeric: tabular-nums;
@@ -514,7 +591,7 @@ body { transition: background-color 0.25s ease; }
   color: var(--accent-ink);
   margin-left: 3px;
 }
-.stat .lab { margin-top: 5px; font-size: 11.5px; font-weight: 500; color: var(--text-3); }
+.stat .lab { margin-top: 5px; font-size: 11.5px; font-weight: 500; color: var(--text-3); white-space: nowrap; }
 
 /* =========================
    Sections
@@ -523,8 +600,6 @@ body { transition: background-color 0.25s ease; }
   display: flex; align-items: center; justify-content: space-between;
   gap: 12px;
   margin: 26px 0 12px;
-  padding-bottom: 9px;
-  border-bottom: 1px solid var(--line);
 }
 .sec h2 {
   font-size: 14.5px; font-weight: 700;
@@ -532,11 +607,12 @@ body { transition: background-color 0.25s ease; }
   color: var(--text);
   display: flex; align-items: center; gap: 9px;
   min-width: 0;
+  white-space: nowrap;
 }
 .sec h2 .rule {
-  width: 3px; height: 13px;
+  width: 4px; height: 15px;
   background: var(--accent);
-  border-radius: 1px;
+  border-radius: var(--r-full);
   flex-shrink: 0;
 }
 .sec .more {
@@ -549,43 +625,49 @@ body { transition: background-color 0.25s ease; }
 .sec .more.danger { color: var(--danger); }
 .sec .more-group { display: inline-flex; gap: 14px; align-items: center; flex-shrink: 0; }
 
-/* Steps — a numbered list on hairlines, indices in mono */
-.steps { display: grid; }
+/* Steps — a numbered list of gummy tiles, indices in mono pills */
+.steps { display: grid; gap: 8px; }
 .step {
-  display: flex; gap: 14px;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--line);
+  display: flex; gap: 13px;
+  padding: 14px;
+  background: var(--surface);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-sm);
 }
 .step .idx {
-  min-width: 18px;
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  border-radius: var(--r-full);
+  background: var(--accent-wash);
   font-family: var(--font-mono);
-  font-size: 11.5px; font-weight: 700;
-  letter-spacing: 0.5px;
+  font-size: 11px; font-weight: 700;
   color: var(--accent-ink);
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 .step .t { font-size: 13.5px; font-weight: 650; color: var(--text); }
 .step .d { margin-top: 4px; font-size: 12.5px; color: var(--text-2); line-height: 1.65; }
 
-/* Platform tiles — outlined paper chips holding a small brand mark, so the
-   three read as one set rather than three competing app icons. */
-.plat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+/* Platform tiles — gummy cards holding a small brand mark; the mark carries
+   the brand hue, so the tiles themselves stay quiet. */
+/* 2 列:6 个平台里有 YouTube / Instagram 两个长名字,3 列在 360dp 上会把
+   它们截成「Instagr…」(实测可用 51px、需要 60px),2 列任何宽度都够。 */
+.plat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .plat-card {
   display: flex; align-items: center; gap: 8px;
   background: var(--surface);
-  border: 1px solid var(--line);
   border-radius: var(--r);
-  padding: 10px 9px;
+  padding: 11px 10px;
   min-width: 0;
-  transition: border-color 0.2s ease;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s ease, transform 0.12s ease;
 }
-.plat-card:hover { border-color: var(--line-2); }
+.plat-card:hover { box-shadow: var(--shadow-md); }
 .plat-icon {
   display: flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px;
+  width: 24px; height: 24px;
   flex-shrink: 0;
-  border-radius: 5px;
+  border-radius: 8px;
   background: var(--surface-2);
 }
 .plat-icon img {
@@ -594,6 +676,8 @@ body { transition: background-color 0.25s ease; }
   object-fit: contain;
   border-radius: 2px;
 }
+/* X 是纯黑品牌字形,暗色底上会糊掉,反相成白色 */
+[data-theme="dark"] .plat-icon img[src$="x.svg"] { filter: invert(1); }
 .plat-card .name {
   font-size: 12px; font-weight: 600; color: var(--text);
   min-width: 0; white-space: nowrap;
@@ -601,15 +685,15 @@ body { transition: background-color 0.25s ease; }
 }
 
 /* =========================
-   History — hairline list
+   History — gummy list rows
    ========================= */
-.hist-list { display: grid; }
+.hist-list { display: grid; gap: 8px; }
 .hist-empty { text-align: center; padding: 52px 20px; color: var(--text-3); }
 .hist-empty .ico {
   width: 60px; height: 60px; margin: 0 auto 16px;
   border-radius: var(--r);
   background: var(--surface);
-  border: 1px dashed var(--line-2);
+  box-shadow: var(--shadow-sm);
   display: grid; place-items: center;
 }
 /* JS hardcodes stroke="#A39E94" on this icon; a CSS rule outranks the
@@ -619,13 +703,15 @@ body { transition: background-color 0.25s ease; }
 
 .hist-item {
   display: flex; gap: 12px;
-  padding: 12px 0;
+  padding: 12px;
   align-items: center;
-  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--r);
+  box-shadow: var(--shadow-sm);
   animation: fadeUp 0.3s ease both;
 }
 .hist-cover {
-  width: 56px; height: 56px; border-radius: var(--r);
+  width: 56px; height: 56px; border-radius: var(--r-sm);
   object-fit: cover;
   background: var(--surface-2);
   flex-shrink: 0;
@@ -637,19 +723,24 @@ body { transition: background-color 0.25s ease; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* The row packs tag + count + time + badge into ~220px on a phone, so it has
+   to be allowed to break BETWEEN items — never inside one. */
 .hist-meta .sub {
-  margin-top: 6px; display: flex; gap: 8px; align-items: center;
+  margin-top: 6px;
+  display: flex; flex-wrap: wrap; gap: 5px 8px; align-items: center;
   font-size: 10.5px; color: var(--text-3);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
+.hist-meta .sub > * { white-space: nowrap; flex-shrink: 0; }
 .hist-meta .sub .p-tag {
-  padding: 2px 6px; border-radius: 4px; font-weight: 600;
+  padding: 2px 7px; border-radius: var(--r-full); font-weight: 600;
   font-family: var(--font-ui);
   background: var(--surface-3); color: var(--text-2);
+  white-space: nowrap; flex-shrink: 0;
 }
 .hist-act {
-  width: 32px; height: 32px; border-radius: var(--r);
+  width: 32px; height: 32px; border-radius: var(--r-sm);
   background: var(--surface-2);
   color: var(--text-2);
   display: grid; place-items: center; flex-shrink: 0;
@@ -664,8 +755,8 @@ body { transition: background-color 0.25s ease; }
   margin-top: 7px;
   display: flex; align-items: flex-start; gap: 6px;
   max-width: 100%;
-  padding: 5px 8px;
-  border-radius: 6px;
+  padding: 5px 9px;
+  border-radius: var(--r-sm);
   background: var(--surface-2);
   font-size: 10.5px;
   line-height: 1.5;
@@ -689,7 +780,8 @@ body { transition: background-color 0.25s ease; }
   font-family: var(--font-ui);
   color: var(--accent-ink);
   background: var(--ok-wash);
-  padding: 2px 6px; border-radius: 4px;
+  padding: 2px 7px; border-radius: var(--r-full);
+  white-space: nowrap; flex-shrink: 0;
 }
 .hist-dl-badge::before {
   content: ''; width: 4px; height: 4px; border-radius: 50%;
@@ -701,9 +793,9 @@ body { transition: background-color 0.25s ease; }
    ========================= */
 .set-group {
   background: var(--surface);
-  border: 1px solid var(--line);
   border-radius: var(--r);
   overflow: hidden;
+  box-shadow: var(--shadow-sm);
 }
 .set-row {
   display: flex; align-items: center; gap: 13px;
@@ -715,7 +807,7 @@ body { transition: background-color 0.25s ease; }
 .set-row:last-child { border-bottom: none; }
 .set-row:hover { background: var(--surface-2); }
 .set-row .si {
-  width: 32px; height: 32px; border-radius: var(--r);
+  width: 32px; height: 32px; border-radius: var(--r-sm);
   background: var(--accent-wash); color: var(--accent-ink);
   display: grid; place-items: center;
   flex-shrink: 0;
@@ -747,16 +839,16 @@ body { transition: background-color 0.25s ease; }
 .about-card {
   margin-top: 4px;
   background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
+  border-radius: var(--r-lg);
   padding: 26px 20px;
   text-align: center;
+  box-shadow: var(--shadow-sm);
 }
 .about-card .logo {
   width: 54px; height: 54px; margin: 0 auto 14px;
-  border-radius: var(--r-lg);
+  border-radius: var(--r);
   overflow: hidden;
-  box-shadow: 0 0 0 1px var(--line-2);
+  box-shadow: var(--shadow-sm);
 }
 .about-card .logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .about-card h3 { font-size: 15.5px; font-weight: 700; letter-spacing: -0.1px; color: var(--text); }
@@ -781,7 +873,7 @@ body { transition: background-color 0.25s ease; }
   height: calc(var(--nav-h) + var(--safe-b));
   padding: 0 10px var(--safe-b);
   background: var(--surface);
-  border-top: 1px solid var(--line);
+  box-shadow: 0 -8px 24px rgba(40, 32, 90, 0.06);
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   /* Above overlay (80) and sheet (90): tabs stay tappable while the result
@@ -791,25 +883,18 @@ body { transition: background-color 0.25s ease; }
 .tab {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 3px;
+  margin: 6px 4px;
   color: var(--text-3);
   font-size: 10.5px; font-weight: 600;
   letter-spacing: 0.2px;
   position: relative;
-  border-radius: var(--r);
+  border-radius: var(--r-sm);
+  white-space: nowrap;
   transition: color 0.16s ease, background 0.16s ease;
 }
 .tab svg { width: 20px; height: 20px; }
 .tab:hover { color: var(--text-2); }
-.tab.active { color: var(--accent-ink); }
-/* A 24px rule sitting on the dock's top hairline marks the active section. */
-.tab.active::before {
-  content: '';
-  position: absolute; top: -1px; left: 50%;
-  transform: translateX(-50%);
-  width: 24px; height: 2px;
-  border-radius: 0 0 2px 2px;
-  background: var(--accent);
-}
+.tab.active { color: var(--accent-ink); background: var(--accent-wash); }
 .tab .badge {
   position: absolute; top: 6px; right: 50%; transform: translateX(19px);
   min-width: 15px; height: 15px; padding: 0 4px;
@@ -844,8 +929,6 @@ body { transition: background-color 0.25s ease; }
   width: 100%; max-width: 430px;
   max-height: 88dvh;
   background: var(--bg);
-  border: 1px solid var(--line);
-  border-bottom: none;
   border-radius: var(--r-lg) var(--r-lg) 0 0;
   z-index: 90;
   transition: transform 0.42s cubic-bezier(0.32, 0.72, 0, 1);
@@ -908,8 +991,8 @@ body { transition: background-color 0.25s ease; }
   overflow: hidden;
   background: var(--surface-2);
   aspect-ratio: 16 / 9;
-  border: 1px solid var(--line);
   cursor: pointer;
+  box-shadow: var(--shadow-sm);
 }
 .preview-wrap video,
 .preview-wrap img {
@@ -964,14 +1047,35 @@ body { transition: background-color 0.25s ease; }
   margin-top: 14px;
   font-size: 15px; font-weight: 650; line-height: 1.55;
   color: var(--text);
+  /* 长按是「复制全文」的入口,不能与系统文本选择菜单抢同一个手势 */
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
 }
+/* 收起态:Instagram 会把整段帖子简介当标题(实测 560 字),收成 4 行 */
+.result-title.is-clamped {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+}
+.title-toggle {
+  display: inline-flex; align-items: center; gap: 2px;
+  margin-top: 2px;
+  font-size: 12px; font-weight: 700;
+  color: var(--accent);
+  transition: opacity 0.16s ease;
+}
+.title-toggle:active { opacity: 0.55; }
+.title-toggle svg { width: 13px; height: 13px; transition: transform 0.2s ease; }
+.title-toggle.is-open svg { transform: rotate(180deg); }
 .result-meta { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 7px; }
 .meta-pill {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 5px 10px; border-radius: var(--r-full);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  padding: 5px 11px; border-radius: var(--r-full);
+  background: var(--surface);
   font-size: 11.5px; font-weight: 600; color: var(--text-2);
+  box-shadow: var(--shadow-sm);
+  white-space: nowrap; flex-shrink: 0;
 }
 .meta-pill svg { width: 12px; height: 12px; }
 
@@ -998,8 +1102,9 @@ body { transition: background-color 0.25s ease; }
 .dl-btn.video:hover { opacity: 0.9; }
 .dl-btn.audio {
   background: var(--surface);
-  border-color: var(--line-2);
+  border-color: transparent;
   color: var(--text);
+  box-shadow: var(--shadow-sm);
 }
 .dl-btn.audio:hover { background: var(--surface-2); }
 .dl-btn.full { grid-column: 1 / -1; }
@@ -1023,12 +1128,12 @@ body { transition: background-color 0.25s ease; }
   from { transform: translateX(-105%); }
   to   { transform: translateX(300%); }
 }
-.dl-btn .label { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 8px; }
+.dl-btn .label { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 
 .notice {
   margin-top: 14px;
-  padding: 11px 13px;
-  border-radius: var(--r);
+  padding: 12px 14px;
+  border-radius: var(--r-sm);
   background: var(--surface-2);
   font-size: 11.5px; color: var(--text-3); line-height: 1.65;
 }
@@ -1044,10 +1149,10 @@ body { transition: background-color 0.25s ease; }
 /* =========================
    Image-note grid (小红书图文)
    =========================
-   Same visual language as the rest of the sheet: paper tiles on hairlines,
-   ink buttons, jade reserved for the 实况 badge (state colour). Geometry
-   contract: cells are 3-column 3:4 tiles; .ig-idx/.ig-live/.ig-dl are
-   absolutely positioned overlays written by app.js's renderImageGrid. */
+   Same visual language as the rest of the sheet: gummy tiles, ink buttons,
+   grape reserved for the 实况 badge (state colour). Geometry contract: cells
+   are 3-column 3:4 tiles; .ig-idx/.ig-live/.ig-dl are absolutely positioned
+   overlays written by app.js's renderImageGrid. */
 .image-grid { margin-top: 4px; }
 .ig-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -1060,11 +1165,12 @@ body { transition: background-color 0.25s ease; }
   min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ig-all {
-  height: 30px; padding: 0 12px;
-  border-radius: var(--r);
+  height: 30px; padding: 0 13px;
+  border-radius: var(--r-full);
   background: var(--solid); color: var(--on-solid);
   font-size: 12px; font-weight: 700;
   flex-shrink: 0;
+  white-space: nowrap;
   transition: transform 0.12s ease, opacity 0.16s ease;
 }
 .ig-all:active { transform: scale(0.96); }
@@ -1075,10 +1181,9 @@ body { transition: background-color 0.25s ease; }
 .ig-cell {
   position: relative;
   aspect-ratio: 3 / 4;
-  border-radius: var(--r);
+  border-radius: var(--r-sm);
   overflow: hidden;
   background: var(--surface-2);
-  border: 1px solid var(--line);
 }
 .ig-cell img {
   width: 100%; height: 100%;
@@ -1105,11 +1210,12 @@ body { transition: background-color 0.25s ease; }
   color: var(--on-accent);
   font-size: 9.5px; font-weight: 700;
   display: grid; place-items: center;
+  white-space: nowrap;
 }
 .ig-dl {
   position: absolute; right: 5px; bottom: 5px;
   width: 26px; height: 26px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: rgba(12, 15, 20, 0.55);
   color: #fff;
   display: grid; place-items: center;
@@ -1153,7 +1259,6 @@ body { transition: background-color 0.25s ease; }
   padding: 11px 16px;
   border-radius: var(--r-full);
   font-size: 13px; font-weight: 600;
-  border: 1px solid var(--line-2);
   box-shadow: var(--shadow-lg);
   z-index: 120;
   opacity: 0; pointer-events: none;
@@ -1188,7 +1293,6 @@ body { transition: background-color 0.25s ease; }
   border-radius: 26px;
   transform-origin: 100% 100%;
   background: var(--surface);
-  border: 1px solid var(--line-2);
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   z-index: 110;   /* above overlay(80)/sheet(90), below toast(120) */
@@ -1204,7 +1308,7 @@ body { transition: background-color 0.25s ease; }
 .taskbar.expanded {
   width: var(--panel-w);
   height: var(--panel-h);
-  border-radius: 22px;
+  border-radius: var(--r-lg);
 }
 
 /* -- collapsed dot layer -- */
@@ -1265,12 +1369,11 @@ body { transition: background-color 0.25s ease; }
   flex: 0 0 46px;
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 8px 0 14px;
-  border-bottom: 1px solid var(--line-2);
 }
-.tb-title { font-size: 13px; font-weight: 700; color: var(--text); }
+.tb-title { font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap; }
 .tb-close {
   width: 32px; height: 32px;
-  border-radius: 10px;
+  border-radius: var(--r-sm);
   display: grid; place-items: center;
   background: var(--surface-2);
   color: var(--text-2);
@@ -1290,8 +1393,7 @@ body { transition: background-color 0.25s ease; }
   display: flex; align-items: center; gap: 10px;
   padding: 10px 12px;
   background: var(--surface-2);
-  border: 1px solid var(--line-2);
-  border-radius: 14px;
+  border-radius: var(--r-sm);
 }
 .task .t-main { flex: 1; min-width: 0; }
 .task .t-name {
@@ -1322,12 +1424,12 @@ body { transition: background-color 0.25s ease; }
 .task.paused .t-bar i { background: var(--text-3); }
 .task .t-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .task .t-btn {
-  height: 30px; min-width: 40px; padding: 0 10px;
-  border-radius: 6px;
-  border: 1px solid var(--line-2);
-  background: var(--surface-2);
+  height: 30px; min-width: 40px; padding: 0 12px;
+  border-radius: var(--r-full);
+  background: var(--surface-3);
   color: var(--text-2);
   font-size: 11.5px; font-weight: 600;
+  white-space: nowrap;
   transition: transform 0.12s ease;
 }
 .task .t-btn:active { transform: scale(0.94); }

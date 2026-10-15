@@ -12,6 +12,9 @@
     douyin: { name: '抖音', color: '#FF3D67', short: '抖' },
     xiaohongshu: { name: '小红书', color: '#FF5A4D', short: '书' },
     bilibili: { name: '哔哩哔哩', color: '#38A9F0', short: 'B' },
+    youtube: { name: 'YouTube', color: '#FF0033', short: 'Y' },
+    x: { name: 'X', color: '#1D1D1F', short: 'X' },
+    instagram: { name: 'Instagram', color: '#E1306C', short: 'IG' },
     other: { name: '其他', color: '#868D9B', short: '·' }
   };
 
@@ -116,7 +119,7 @@
     const urlRe = /(https?:\/\/[^\s<>"'）)】」』]+)/i;
     const m = text.match(urlRe);
     if (m) return m[1].replace(/[.,;:!?，。；：！？]+$/, '');
-    const bareRe = /\b((?:v\.)?douyin\.com\/[^\s]+|www\.douyin\.com\/[^\s]+|xiaohongshu\.com\/[^\s]+|xhslink\.com\/[^\s]+|xhslink\.cn\/[^\s]+|b23\.tv\/[^\s]+|www\.bilibili\.com\/[^\s]+|bilibili\.com\/[^\s]+)/i;
+    const bareRe = /\b((?:v\.)?douyin\.com\/[^\s]+|www\.douyin\.com\/[^\s]+|xiaohongshu\.com\/[^\s]+|xhslink\.com\/[^\s]+|xhslink\.cn\/[^\s]+|b23\.tv\/[^\s]+|www\.bilibili\.com\/[^\s]+|bilibili\.com\/[^\s]+|(?:www\.|m\.)?youtube\.com\/[^\s]+|youtu\.be\/[^\s]+|(?:www\.)?(?:x|twitter)\.com\/[^\s]+|(?:www\.)?instagram\.com\/[^\s]+|instagr\.am\/[^\s]+)/i;
     const b = text.match(bareRe);
     if (b) {
       const bare = b[1].replace(/[.,;:!?，。；：！？]+$/, '');
@@ -125,12 +128,22 @@
     return null;
   }
 
+  /* 按主机名判定新平台:子串匹配会把 box.com、hex.com 之类误认成 X */
+  function hostMatches(url, domains) {
+    let host = '';
+    try { host = (new URL(url)).hostname.toLowerCase(); } catch (_) { return false; }
+    return domains.some(function (d) { return host === d || host.endsWith('.' + d); });
+  }
+
   function detectPlatform(url) {
     if (!url) return null;
     const u = url.toLowerCase();
     if (u.includes('douyin.com') || u.includes('iesdouyin.com')) return 'douyin';
     if (u.includes('xiaohongshu.com') || u.includes('xhslink.com') || u.includes('xhslink.cn')
       || u.includes('xhscdn.com')) return 'xiaohongshu';
+    if (hostMatches(url, ['youtube.com', 'youtu.be'])) return 'youtube';
+    if (hostMatches(url, ['x.com', 'twitter.com'])) return 'x';
+    if (hostMatches(url, ['instagram.com', 'instagr.am', 'cdninstagram.com'])) return 'instagram';
     if (u.includes('bilibili.com') || u.includes('b23.tv') || u.includes('bili')) return 'bilibili';
     return 'other';
   }
@@ -140,7 +153,8 @@
     const url = extractUrl(raw);
     const plat = detectPlatform(url);
 
-    pasteCard.classList.remove('detect-douyin', 'detect-xiaohongshu', 'detect-bilibili');
+    pasteCard.classList.remove('detect-douyin', 'detect-xiaohongshu', 'detect-bilibili',
+      'detect-youtube', 'detect-x', 'detect-instagram');
     if (url && plat && plat !== 'other') {
       pasteCard.classList.add('detect-' + plat);
       detected.classList.add('show');
@@ -253,12 +267,15 @@
 
   function getPreviewVideoUrl(data) {
     if (!data) return null;
-    const candidates = [
-      data.originDownloadVideoUrl,
-      data.downloadVideoUrl,
-      data.originDownloadAudioUrl,
-      data.downloadAudioUrl
-    ];
+    /* Instagram 的 origin 直链在 scontent.cdninstagram.com,大陆网络整域不可达
+       —— 预览优先走 API 代理(downloadVideoUrl),直链降为备用;其余平台沿用
+       「origin 优先」(直链更快,代理要服务端现解析)。 */
+    const viaProxy = detectPlatform(data.url || '') === 'instagram';
+    const candidates = viaProxy
+      ? [data.downloadVideoUrl, data.originDownloadVideoUrl,
+         data.downloadAudioUrl, data.originDownloadAudioUrl]
+      : [data.originDownloadVideoUrl, data.downloadVideoUrl,
+         data.originDownloadAudioUrl, data.downloadAudioUrl];
     for (let i = 0; i < candidates.length; i++) {
       const u = candidates[i];
       if (typeof u === 'string' && u.trim() && u.trim() !== '#') return u.trim();
@@ -368,6 +385,8 @@
         if (resolved) parseUrl = resolved;
       } catch (_) { /* 保持 parseUrl = url */ }
     }
+    // Instagram 只需要字符串重写(/share/<kind>/<id> → /<kind>/<id>),不碰原生桥
+    if (plat === 'instagram') parseUrl = normalizeInstagramUrl(parseUrl);
 
     try {
       const res = await fetch(API_BASE + '/api/parse?url=' + encodeURIComponent(parseUrl), {
@@ -741,6 +760,20 @@
     return m ? m[1] + '/' : u;
   }
 
+  /* Instagram 分享链重写。App 的「复制链接」在部分版本给出
+   * /share/<kind>/<id>/ 形态,解析 API 的路径校验只认 /reel|p|tv/<id>/
+   * —— 同一条有效帖子实测 /share/reel 报 BAD_REQUEST、/reel 正常,所以先
+   * 还原成标准形态(顺带丢掉 igsh 跟踪参数);旧域名 instagr.am 并回
+   * www.instagram.com。纯字符串重写,不需要原生桥。其他形态原样返回。 */
+  function normalizeInstagramUrl(u) {
+    if (typeof u !== 'string') return u;
+    const m = u.match(/^https?:\/\/(?:www\.|m\.)?instagram\.com\/share\/(reel|p|tv)\/([A-Za-z0-9_-]+)/i);
+    if (m) return 'https://www.instagram.com/' + m[1].toLowerCase() + '/' + m[2] + '/';
+    const legacy = u.match(/^https?:\/\/(?:www\.)?instagr\.am\/(.+)$/i);
+    if (legacy) return 'https://www.instagram.com/' + legacy[1];
+    return u;
+  }
+
   /* API 正常返回时的图文增强:拿不到就 resolve(null),静默走 API 降级。 */
   function enrichImageNote(noteUrl) {
     return fetchNoteHtmlText(noteUrl).then(function (html) {
@@ -792,7 +825,7 @@
      fallback = 预览备选地址:抖音直链按镜像主机随机下发(p3/p9/p11/p26…),
      个别主机在部分运营商网络不通(真机实测 13 张里恰好 p11 的 2 张预览挂),
      <img> onerror 时切到备选重试一次;XHS 反向同理(直链挂→代理)。 */
-  function buildImageItems(apiImgs, noteImgs) {
+  function buildImageItems(apiImgs, noteImgs, plat) {
     if (noteImgs && noteImgs.length) {
       return noteImgs.map(function (n, i) {
         const api = apiImgs[i];
@@ -808,21 +841,43 @@
         };
       });
     }
+    /* Instagram 的图片直链在 scontent.cdninstagram.com,大陆网络整域不可达
+       (实测本机 scontent / instagram.com / google 全部不通,只有解析 API 通),
+       直链既放不出预览也下不动,所以主地址改用 API 代理、直链降为备用 ——
+       与小红书「直链优先」刚好相反。 */
+    const viaProxy = plat === 'instagram';
     return (apiImgs || []).map(function (a) {
       const proxy = a.src || a.dl;
       const orig = a.orig || '';
-      const main = orig || proxy;
+      const main = viaProxy ? (a.dl || proxy) : (orig || proxy);
       return {
         display: main,
-        fallback: main !== proxy ? proxy : ((a.dl && a.dl !== a.src) ? a.dl : ''),
+        fallback: viaProxy
+          ? (proxy !== main ? proxy : '')
+          : (main !== proxy ? proxy : ((a.dl && a.dl !== a.src) ? a.dl : '')),
         /* 下载直链优先:API 代理每次请求都要服务端现解析一次(实测单张
            7~83s,设备上首次请求还偶发 200+错误体触发坏内容守卫),直链
            是无签名存档原图,CDN 直下几秒完成。失败由 download.js
            的 done 回调自动换代理重试一次。 */
         still: main,
-        live: false, liveVideo: '', liveVideoBackup: '', fromNote: false
+        live: false, liveVideo: '', liveVideoBackup: '', fromNote: false,
+        // 代理地址不带扩展名,URL 推不出格式;Instagram 代理吐的是 JPEG
+        ext: imageExtFromUrl(main) || (viaProxy ? '.jpg' : '')
       };
     });
+  }
+
+  /* 按地址推断图片真实格式(X 的 ?format=jpg 等);推不出返回空,
+     由调用方沿用各平台原有的默认扩展名。 */
+  function imageExtFromUrl(u) {
+    let fmt = '';
+    try { fmt = ((new URL(u)).searchParams.get('format') || '').toLowerCase(); } catch (_) {}
+    if (fmt === 'jpg' || fmt === 'jpeg') return '.jpg';
+    if (fmt === 'png') return '.png';
+    if (fmt === 'webp') return '.webp';
+    const m = String(u || '').split('?')[0].match(/\.(jpe?g|png|webp)$/i);
+    if (!m) return '';
+    return /png/i.test(m[1]) ? '.png' : (/webp/i.test(m[1]) ? '.webp' : '.jpg');
   }
 
   /* 渲染图文网格:序号角标 + 实况徽标 + 逐张下载按钮。 */
@@ -867,15 +922,17 @@
     const allClean = items.length > 0 && items.every(function (x) {
       return String(x.still || '').indexOf('sns-img') >= 0;
     });
-    // fromNote=false 的两种来源文案不同:小红书是笔记页抓取失败降级,
+    // fromNote=false 的几种来源文案不同:小红书是笔记页抓取失败降级,
     // 抖音本来就是 API 单数据源,不存在「降级」,照搬会误导。
     const sourceTxt = fromNote
       ? '已通过笔记页获取无水印原图。'
       : (allClean
         ? '已获取无水印原图。'
-        : (detectPlatform(data.url || '') === 'douyin'
-          ? '已获取抖音图片。'
-          : '笔记页不可用,已降级为预览图质量。'));
+        : (detectPlatform(data.url || '') === 'douyin' ? '已获取抖音图片。'
+          : detectPlatform(data.url || '') === 'xiaohongshu' ? '笔记页不可用,已降级为预览图质量。'
+          : detectPlatform(data.url || '') === 'instagram'
+            ? '已获取 Instagram 图片(经解析服务转发,直链在大陆网络不可达)。'
+          : '已获取图片。'));
     $('ig-note').textContent = sourceTxt
       + (liveCount ? '实况图将合成动态照片(.jpg),在支持的相册里按住即可播放。' : '');
   }
@@ -887,17 +944,20 @@
     parseLoading.classList.remove('show');
     resultView.style.display = 'block';
 
-    const cover = data.cover || gradientCover((PLATFORM_META[detectPlatform(data.url)] || PLATFORM_META.other).color);
+    const fallbackCover = gradientCover((PLATFORM_META[detectPlatform(data.url)] || PLATFORM_META.other).color);
+    const cover = data.cover || fallbackCover;
     const coverImg = $('result-cover');
+    /* Instagram 的封面取自 scontent.cdninstagram.com,大陆网络不可达;载不出时
+       换品牌渐变占位,别把破图留在预览位上(能连上的网络照常显示真封面)。 */
+    coverImg.onerror = function () {
+      if (coverImg.src !== fallbackCover) coverImg.src = fallbackCover;
+    };
     coverImg.src = cover;
     coverImg.alt = data.title || '封面';
 
-    $('result-title').textContent = data.title || data.desc || '未命名视频';
+    applyResultTitle(data.title || data.desc || '未命名视频');
 
-    const platKey = detectPlatform(data.url || '') ||
-      (data.platform === 'douyin' ? 'douyin' :
-       data.platform === 'xiaohongshu' || data.platform === 'xhs' ? 'xiaohongshu' :
-       (data.platform === 'bili' || data.platform === 'bilibili') ? 'bilibili' : 'other');
+    const platKey = detectPlatform(data.url || '') || normalizePlatKey(data.platform);
     const meta = PLATFORM_META[platKey] || PLATFORM_META.other;
 
     const metaEl = $('result-meta');
@@ -924,7 +984,15 @@
       pill('音视频分离');
     }
 
-    const hasVideo = App.hasSrc(data.downloadVideoUrl) || App.hasSrc(data.originDownloadVideoUrl);
+    // HLS 清单(YouTube 视频只给 .m3u8 / hls_playlist)不能交给 DownloadManager,
+    // 存下来是文本清单而非视频;这类视频隐藏下载按钮,音频照常。
+    // 后端下发的 /api/download 代理地址本身不带 .m3u8,要靠 mediaActions 判定
+    const videoMarkedHls = !!(data.mediaActions && data.mediaActions.video === 'browser-hls-download');
+    const hasVideo = !videoMarkedHls
+      && ((App.hasSrc(data.downloadVideoUrl) && !isHlsUrl(data.downloadVideoUrl))
+        || (App.hasSrc(data.originDownloadVideoUrl) && !isHlsUrl(data.originDownloadVideoUrl)));
+    const videoIsHls = !hasVideo && (videoMarkedHls
+      || isHlsUrl(data.downloadVideoUrl) || isHlsUrl(data.originDownloadVideoUrl));
     const hasAudio = App.hasSrc(data.downloadAudioUrl) || App.hasSrc(data.originDownloadAudioUrl);
     const row = $('dl-row');
     const grid = $('image-grid');
@@ -932,7 +1000,7 @@
 
     if (isImageNote(data)) {
       // 图文笔记:视频预览与视频/音频按钮整块隐藏,网格负责一切动作
-      data._imageItems = buildImageItems(normalizeImages(data.images), noteImgs);
+      data._imageItems = buildImageItems(normalizeImages(data.images), noteImgs, platKey);
       renderImageGrid(data);
       grid.style.display = 'block';
       previewWrap.style.display = 'none';
@@ -973,8 +1041,80 @@
 
     const notice = $('result-notice');
     notice.classList.remove('is-active');
-    notice.textContent = '点击下载后将调用系统下载器保存到手机。部分平台链接有时效，请尽快下载。';
+    notice.textContent = videoIsHls
+      ? '该视频为流媒体(HLS)，暂不支持直接保存视频文件' + (hasAudio ? '，可下载音频。' : '。')
+      : '点击下载后将调用系统下载器保存到手机。部分平台链接有时效，请尽快下载。';
   }
+
+  function isHlsUrl(u) {
+    return typeof u === 'string' && /\.m3u8(\?|$)|\/hls_playlist\//i.test(u);
+  }
+
+  /* ========== 结果标题(简介) ==========
+     Instagram 把整段帖子简介当 title(实测 560 字),整段铺开会把下载按钮
+     挤出屏幕,所以默认收成 TITLE_CLAMP_LINES 行 + 「展开」。只有真的溢出
+     才显示按钮 —— 抖音/小红书的短标题完全不受影响。长按复制全文。 */
+  const TITLE_CLAMP_LINES = 4;
+  function applyResultTitle(text) {
+    const el = $('result-title');
+    const btn = $('title-toggle');
+    const label = $('title-toggle-label');
+    el.classList.remove('is-clamped');
+    btn.classList.remove('is-open');
+    btn.style.display = 'none';
+    if (label) label.textContent = '展开';
+    el.textContent = text;
+    /* 同步量一次未折叠的真实高度(sizeof 行高):容器在 renderResult 里已
+       display:block,这里读 offsetHeight 会强制同步布局,不依赖 rAF
+       (壳内后台标签 rAF 会冻结,量不到)。 */
+    const lineH = parseFloat(getComputedStyle(el).lineHeight) || 23;
+    if (el.offsetHeight > lineH * TITLE_CLAMP_LINES + 2) {
+      el.classList.add('is-clamped');
+      btn.style.display = '';
+    }
+  }
+
+  $('title-toggle').addEventListener('click', function () {
+    const el = $('result-title');
+    const collapsed = el.classList.toggle('is-clamped');
+    this.classList.toggle('is-open', !collapsed);
+    const label = $('title-toggle-label');
+    if (label) label.textContent = collapsed ? '展开' : '收起';
+  });
+
+  /* 长按标题 = 复制全文。600ms,移动超过 10px 或提前抬手都取消 —— 弹窗自己
+     有下拉关闭手势、正文还要滚动,不能让这个监听把它们吃掉(全程 passive)。 */
+  (function () {
+    const el = $('result-title');
+    const HOLD_MS = 600, MOVE_PX = 10;
+    let timer = null, sx = 0, sy = 0;
+    function cancel() { if (timer) { clearTimeout(timer); timer = null; } }
+    function copyAll() {
+      const text = el.textContent;
+      if (!text) return;
+      copyText(text);
+      showToast('已复制全部文字');
+    }
+    el.addEventListener('touchstart', function (e) {
+      if (!el.textContent) return;
+      const t = e.touches[0];
+      sx = t.clientX; sy = t.clientY;
+      cancel();
+      timer = setTimeout(function () { timer = null; copyAll(); }, HOLD_MS);
+    }, { passive: true });
+    el.addEventListener('touchmove', function (e) {
+      if (!timer) return;
+      const t = e.touches[0];
+      if (Math.abs(t.clientX - sx) > MOVE_PX || Math.abs(t.clientY - sy) > MOVE_PX) cancel();
+    }, { passive: true });
+    el.addEventListener('touchend', cancel);
+    el.addEventListener('touchcancel', cancel);
+    // 桌面与浏览器预览没有长按,右键同义
+    el.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      copyAll();
+    });
+  })();
 
 
   function markDownloaded(id, kind) {
@@ -1282,6 +1422,9 @@
     if (v.includes('douyin')) return 'douyin';
     if (v.includes('xiaohongshu') || v === 'xhs' || v.includes('xhs')) return 'xiaohongshu';
     if (v.includes('bili') || v === 'bili') return 'bilibili';
+    if (v.includes('youtube') || v === 'youtu.be') return 'youtube';
+    if (v.includes('instagram') || v === 'ig' || v === 'instagr.am') return 'instagram';
+    if (v === 'x' || v === 'twitter') return 'x';
     return 'other';
   }
   function formatTime(ts) {
@@ -1418,25 +1561,67 @@
   updateDock();
 
   /* ========== Platform chips ========== */
+  const chipRowEl = $('chip-row');
+
+  /* 右边还有被裁的芯片时,给行加右边缘渐隐提示可横向滑动 */
+  function updateChipFade() {
+    const more = chipRowEl.scrollWidth - chipRowEl.clientWidth - chipRowEl.scrollLeft > 2;
+    chipRowEl.classList.toggle('has-more', more);
+  }
+  chipRowEl.addEventListener('scroll', updateChipFade, { passive: true });
+  window.addEventListener('resize', updateChipFade);
+
+  /* 桌面端没有触摸滑动,滚动条又被隐藏:把滚轮纵向增量转成行的横向滚动。
+     已经在某一方向的尽头时不再拦截,让页面恢复正常的纵向滚动。 */
+  chipRowEl.addEventListener('wheel', function (e) {
+    const max = chipRowEl.scrollWidth - chipRowEl.clientWidth;
+    if (max <= 0 || e.deltaY === 0) return;
+    const cur = chipRowEl.scrollLeft;
+    if ((cur <= 0 && e.deltaY < 0) || (cur >= max && e.deltaY > 0)) return;
+    chipRowEl.scrollLeft = Math.max(0, Math.min(max, cur + e.deltaY));
+    e.preventDefault();
+  }, { passive: false });
+
   document.querySelectorAll('.chip').forEach(function (chip) {
     chip.addEventListener('click', function () {
       document.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('on'); });
       chip.classList.add('on');
+      // 选中的芯片若被裁在边缘,横向滚到完整可见
+      const cl = chip.offsetLeft, cr = cl + chip.offsetWidth;
+      if (cl < chipRowEl.scrollLeft) {
+        chipRowEl.scrollTo({ left: cl - 12, behavior: 'smooth' });
+      } else if (cr > chipRowEl.scrollLeft + chipRowEl.clientWidth) {
+        chipRowEl.scrollTo({ left: cr - chipRowEl.clientWidth + 12, behavior: 'smooth' });
+      }
       const p = chip.getAttribute('data-p');
       const placeholders = {
         all: '打开 App 复制分享链接，粘贴到这里…\n例如 https://v.douyin.com/xxxx',
         douyin: '粘贴抖音分享链接或口令…\n例如 https://v.douyin.com/xxxx',
         xiaohongshu: '粘贴小红书笔记链接或口令…\n例如 https://www.xiaohongshu.com/explore/…',
-        bilibili: '粘贴 B 站视频链接或 b23.tv 短链…\n例如 https://www.bilibili.com/video/BV…'
+        bilibili: '粘贴 B 站视频链接或 b23.tv 短链…\n例如 https://www.bilibili.com/video/BV…',
+        youtube: '粘贴 YouTube 视频链接…\n例如 https://youtu.be/xxxx',
+        x: '粘贴 X（Twitter）推文链接…\n例如 https://x.com/user/status/xxxx',
+        instagram: '粘贴 Instagram 帖子链接…\n例如 https://www.instagram.com/reel/xxxx'
       };
       linkInput.placeholder = placeholders[p] || placeholders.all;
     });
   });
 
   /* ========== Boot ========== */
+  /* 历史封面可能是 scontent.cdninstagram.com(Instagram)——大陆网络不可达。
+     载不出就藏掉,别在列表里留一个破图;error 事件不冒泡,所以用捕获阶段
+     在容器上一次代理,不必每次渲染重绑。 */
+  $('hist-list').addEventListener('error', function (e) {
+    const img = e.target;
+    if (img && img.classList && img.classList.contains('hist-cover')) {
+      img.style.visibility = 'hidden';
+    }
+  }, true);
+
   renderStats();
   renderHistory();
   updateDetectUI();
+  updateChipFade();
 
   try {
     const params = new URLSearchParams(location.search);

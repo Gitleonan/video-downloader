@@ -29,7 +29,7 @@
       </div>
       <div>
         <div class="brand-title">Video Downloader</div>
-        <div class="brand-sub">抖音 · 小红书 · B站</div>
+        <div class="brand-sub">抖音 · 小红书 · B站 · YouTube · X · Instagram</div>
       </div>
     </div>
     <div class="bar-actions">
@@ -56,7 +56,7 @@
       <div class="hero">
         <div class="hero-eyebrow"><span class="sep"></span>粘贴 · 解析 · 保存</div>
         <h1>把喜欢的视频<em>留在手机里</em></h1>
-        <p>复制抖音、小红书或哔哩哔哩的分享链接，粘贴到下方即可解析下载。</p>
+        <p>复制抖音、小红书、哔哩哔哩、YouTube、X 或 Instagram 的分享链接，粘贴到下方即可解析下载。</p>
       </div>
 
       <div class="chip-row" id="chip-row">
@@ -64,6 +64,9 @@
         <button class="chip" data-p="douyin">抖音</button>
         <button class="chip" data-p="xiaohongshu">小红书</button>
         <button class="chip" data-p="bilibili">哔哩哔哩</button>
+        <button class="chip" data-p="youtube">YouTube</button>
+        <button class="chip" data-p="x">X</button>
+        <button class="chip" data-p="instagram">Instagram</button>
       </div>
 
       <!-- Unsticky geometry reference for the dock logic -->
@@ -114,7 +117,7 @@
           <div class="lab">累计解析</div>
         </div>
         <div class="stat">
-          <div class="num">3<em>端</em></div>
+          <div class="num">6<em>端</em></div>
           <div class="lab">支持平台</div>
         </div>
         <div class="stat">
@@ -171,6 +174,24 @@
             <img src="img/bilibili.svg" alt="" width="14" height="14" loading="lazy" decoding="async" aria-hidden="true">
           </div>
           <div class="name">哔哩哔哩</div>
+        </div>
+        <div class="plat-card">
+          <div class="plat-icon">
+            <img src="img/youtube.svg" alt="" width="14" height="14" loading="lazy" decoding="async" aria-hidden="true">
+          </div>
+          <div class="name">YouTube</div>
+        </div>
+        <div class="plat-card">
+          <div class="plat-icon">
+            <img src="img/x.svg" alt="" width="14" height="14" loading="lazy" decoding="async" aria-hidden="true">
+          </div>
+          <div class="name">X</div>
+        </div>
+        <div class="plat-card">
+          <div class="plat-icon">
+            <img src="img/instagram.svg" alt="" width="14" height="14" loading="lazy" decoding="async" aria-hidden="true">
+          </div>
+          <div class="name">Instagram</div>
         </div>
       </div>
     </section>
@@ -304,6 +325,12 @@
       </div>
 
       <div class="result-title" id="result-title"></div>
+      <!-- 长文案(Instagram 把整段帖子简介当 title)默认收成 4 行;只有真的
+           溢出时才由 app.js 显示这个按钮。长按标题 = 复制全文。 -->
+      <button class="title-toggle" id="title-toggle" type="button" style="display:none">
+        <span id="title-toggle-label">展开</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
       <div class="result-meta" id="result-meta"></div>
 
       <div class="dl-actions">
