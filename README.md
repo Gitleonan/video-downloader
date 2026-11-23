@@ -103,6 +103,8 @@ Git Bash / Linux 下用 `./scripts/serve.sh [端口]`。
 - **后台任务条**:底部常驻任务条由真实事件驱动,显示文件名 / 已下载大小 / 百分比,关掉解析弹窗后任务照跑;支持暂停(取消任务行)与取消
 - **下载目录按媒体类型分流**:视频存 `Movies/Video Downloader/`、音频存 `Music/Video Downloader/`(系统相册必扫的媒体集合,保证相册可见),其余存 `Download/Video Downloader/`
 - **坏内容守卫**:上游限流或链接过期时会返回 200 + 错误体,按 Content-Type 与文件头魔数(ftyp / EBML / RIFF / ID3 …)双重校验,非已知媒体容器一律判坏并删除,避免存成假视频
+- **下载通道按平台择优**:抖音视频走 CDN 直链(`aweme.snssdk.com` → `*.douyinvod.com`),实测 2~4 MB/s,比解析服务代理快 3~25 倍(同一文件同一字节数,不掉画质);其余平台继续走代理(B 站直链有防盗链)。主通道失败时自动换另一条通道重下一次,两条都挂才报失败
+- **无障碍达标**:正文与次要文字在浅/深两套主题下均满足 WCAG AA(≥4.5:1,按各自最深的落底色校验);正文最小 11px;按钮触摸目标 ≥36px;任务岛带 `aria-expanded` / `aria-controls` 并支持键盘 Enter/Space;开启「减少动态效果」时下载进度改用低频脉冲表达(不会冻成一个静止色块)
 - **剪贴板桥**:`AppBridge.readClipboard / writeClipboard` 兜底,规避 WebView `navigator.clipboard.readText` 在 MIUI 等国产 ROM 上被拒绝的问题
 - **边到边全面屏适配**:系统栏不做原生 padding,而是把真实 inset 注入成页面的 `--safe-t` / `--safe-b`。顶栏背景因此能一直画到状态栏底下(内容自己下移),底栏背景铺到屏幕最底,不会出现「状态栏一条色带」的分层感
 - **系统栏配色跟随主题**:页面切换日/夜间时通过桥把当前底色回报原生,状态栏底色与图标明暗同步,深色模式下不会黑图标压黑底

@@ -1651,6 +1651,8 @@
   App.markDownloaded = markDownloaded;
   App.saveFileToIDB = saveFileToIDB;
   App.showDlHint = showDlHint;
+  /* download.js 按平台选下载通道(抖音直链优先,其余代理优先)需要它 */
+  App.detectPlatform = detectPlatform;
   Object.defineProperty(App, 'currentResult', {
     get: function () { return currentResult; }
   });

@@ -21,9 +21,54 @@
     return typeof u === 'string' && u.trim().length > 0 && u.trim() !== '#';
   }
 
+  /* 抖音直链有效性:失效/已删除的视频,API 仍会下发 originDownloadVideoUrl,
+     但 video_id 是空串(`…/play/?video_id=&ratio=720p`)—— 该地址实测
+     200 + 0 字节,交 DownloadManager 只会白等一个空任务。这类地址必须
+     当作「没有」,直接走代理。 */
+  function isUsableMediaUrl(u) {
+    if (!hasSrc(u)) return false;
+    if (/[?&]video_id=(?:&|$)/i.test(u)) return false;
+    return true;
+  }
+
+  /* 抖音直链(v26-colds.douyinvod.com / aweme.snssdk.com)实测单连接
+     2~4 MB/s,而 API 代理(downloadVideoUrl,Cloudflare Worker 现解析转发)
+     只有 80~600 KB/s —— 同一视频差 3~25 倍(2026-11 实测)。直链无 Referer/
+     UA 要求(DownloadManager 默认 UA 直接 206),字节数与代理完全一致(同
+     画质),所以抖音「直链优先」,代理降为失败兜底。
+     B 站相反:直链防盗链 403(加 Referer 才 206),不能照搬,继续代理优先。 */
+  const DIRECT_FIRST_PLATFORMS = { douyin: true };
+
+  function detectPlatformSafe(url) {
+    try {
+      return (window.App && typeof App.detectPlatform === 'function')
+        ? App.detectPlatform(url) : null;
+    } catch (_) { return null; }
+  }
+
   function pickDownloadUrl(data, kind) {
-    if (kind === 'video') return data.downloadVideoUrl || data.originDownloadVideoUrl || null;
-    return data.downloadAudioUrl || data.originDownloadAudioUrl || null;
+    if (!data) return null;
+    const directFirst = !!DIRECT_FIRST_PLATFORMS[detectPlatformSafe(data.url || '')];
+    const direct = kind === 'video' ? data.originDownloadVideoUrl : data.originDownloadAudioUrl;
+    const proxy = kind === 'video' ? data.downloadVideoUrl : data.downloadAudioUrl;
+    return directFirst
+      ? ((isUsableMediaUrl(direct) && direct) || proxy || null)
+      : (proxy || (isUsableMediaUrl(direct) ? direct : null) || null);
+  }
+
+  /* 与 pickDownloadUrl 互补的那条通道:主地址失败时换它重下一次
+     (抖音:直链挂→代理;其他平台:代理挂→直链)。 */
+  function pickFallbackUrl(data, kind) {
+    if (!data) return null;
+    const primary = pickDownloadUrl(data, kind);
+    const cands = kind === 'video'
+      ? [data.originDownloadVideoUrl, data.downloadVideoUrl]
+      : [data.originDownloadAudioUrl, data.downloadAudioUrl];
+    for (let i = 0; i < cands.length; i++) {
+      const u = cands[i];
+      if (isUsableMediaUrl(u) && u !== primary) return u;
+    }
+    return null;
   }
 
   /* Download UI driven by the Android shell's real DownloadManager events */
@@ -65,9 +110,18 @@
     taskbarExpanded = v;
     const bar = $('taskbar');
     if (bar) bar.classList.toggle('expanded', v);
+    /* The dot is the disclosure control, so its state has to follow the
+       panel: without this a screen reader reads a plain button with no
+       indication that tapping it opened anything (rule: a11y parity). */
+    const dot = $('tb-dot');
+    if (dot) dot.setAttribute('aria-expanded', v ? 'true' : 'false');
   }
 
   const RING_LEN = 119.38;   /* 2π·19,dot 进度环周长 */
+
+  /* 任务面板顶边与可视区上沿之间至少保留的呼吸空间:面板顶到状态栏
+     底下会把顶栏信息整片盖掉,视觉上也分不清它属于哪一层。 */
+  const TOP_SAFE_GAP = 72;
 
   function renderTasks() {
     const bar = $('taskbar');
@@ -77,6 +131,10 @@
     if (!urls.length) {
       setTaskbarExpanded(false);
       bar.classList.remove('indet');
+      // 清掉最后一轮的行:否则收起后的 dot 里留着上一次任务的
+      // 「下载中 0%」文本,DOM 检查/无障碍读屏都会读到已结束的任务。
+      const staleList = $('tb-list');
+      if (staleList) staleList.innerHTML = '';
       return;
     }
     const liveUrls = urls.filter(function (u) { return dlTasks[u].live; });
@@ -152,17 +210,55 @@
         '<div class="t-actions">' + acts + '</div>' +
       '</div>';
       }).join('');
-      /* 面板高度跟内容走(头 46 + 列表实高),上限 56vh;同步测量不依赖
-         rAF —— 后台标签里 rAF 冻结(壳的已知坑)。测量在收起态也成立:
-         面板层是固定设计尺寸,不被容器裁剪影响。 */
-      const contentH = 46 + list.scrollHeight + 20;
-      const maxH = Math.round(window.innerHeight * 0.56);
-      bar.style.setProperty('--panel-h', Math.max(150, Math.min(contentH, maxH)) + 'px');
+      /* 面板高度跟内容走(头 46 + 列表实高 + 上下 padding),上限取
+         56vh 与「顶边不越出可视区」两者的较小值。
+         必须量「内容本身」而不是 list.scrollHeight:.tb-list 是 flex:1
+         的滚动容器,scrollHeight 恒等于它当前的 clientHeight —— 拿它
+         加上头部和 padding 会恒比当前面板高 20px,而 progress 事件每
+         600ms 就重渲染一次,于是面板每帧长高 20px 一路顶到上限,
+         越出 sheet 顶边盖住上层内容(2026-11 真机截图反馈的「慢慢超出」)。
+         所以累加各行的 offsetHeight(行是 flex-shrink:0,高度不随容器
+         高变化)+ 行间距 + 上下 padding,是内容真实高度,与面板当前高度
+         无关,多次调用结果稳定。 */
+      const rowsH = Array.prototype.reduce.call(list.children, function (sum, el) {
+        return sum + el.offsetHeight;
+      }, 0);
+      const listStyle = getComputedStyle(list);
+      const gap = parseFloat(listStyle.rowGap) || 0;
+      const padY = parseFloat(listStyle.paddingTop) + parseFloat(listStyle.paddingBottom);
+      const rows = list.children.length;
+      const contentH = 46 + rowsH + Math.max(0, rows - 1) * gap + padY;
+
+      /* 越界约束:面板底边固定在 dot 位置,高度再大就会顶穿可视区上沿
+         (开 sheet 时视觉上就像「盖到上层抽屉上」)。上限取可视区高度
+         减去底边留白与顶部安全余量。
+         不设下限:面板只在有任务时出现,空列表的极小值没有意义;单行任务
+         真实高度约 131px,旧下限 150px 会在行下留出一截空底色。 */
+      const barRect = bar.getBoundingClientRect();
+      const bottomInset = window.innerHeight - (barRect.bottom || barRect.top);
+      const roomAbove = window.innerHeight - bottomInset - TOP_SAFE_GAP;
+      const maxH = Math.max(120, Math.min(Math.round(window.innerHeight * 0.56), roomAbove));
+      bar.style.setProperty('--panel-h', Math.max(120, Math.min(contentH, maxH)) + 'px');
     }
   }
 
   $('tb-dot').addEventListener('click', function () { setTaskbarExpanded(true); });
   $('tb-close').addEventListener('click', function () { setTaskbarExpanded(false); });
+  /* The dot carries tabindex="0" + role="button", so it must also answer
+     Enter/Space — a focusable control that ignores the keyboard is worse
+     than one that isn't focusable at all. */
+  $('tb-dot').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      setTaskbarExpanded(true);
+    }
+  });
+  $('tb-close').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      setTaskbarExpanded(false);
+    }
+  });
 
   $('taskbar').addEventListener('click', function (e) {
     const btn = e.target.closest('.t-btn');
@@ -226,6 +322,28 @@
     return false;
   }
 
+  /* 视频/音频备用通道重试(只一次)。主通道地址 → {url, name} 的映射在
+     点击下载时登记;失败回调里没有 kind 上下文,靠这张表反查文件名与备用
+     地址。备用地址也失败时(表里已无该键)自然走原生失败 toast。 */
+  const mediaFallbacks = {};   // primaryUrl -> { url: fallbackUrl, name: filename }
+  const mediaRetried = {};     // fallbackUrl -> true(防止备用通道再触发重试)
+
+  function tryMediaFallback(url) {
+    const fb = mediaFallbacks[url];
+    if (!fb) return false;
+    delete mediaFallbacks[url];
+    if (!hasSrc(fb.url) || dlTasks[fb.url] || mediaRetried[url]) return false;
+    mediaRetried[fb.url] = true;
+    if (!(window.AppBridge && typeof AppBridge.download === 'function')) return false;
+    dlTasks[fb.url] = { name: fb.name, state: 'running', cur: 0, total: -1 };
+    renderTasks();
+    try {
+      AppBridge.download(fb.url, fb.name);
+    } catch (_) { delete dlTasks[fb.url]; return false; }
+    App.showToast('下载通道失败，已换备用地址重试');
+    return true;
+  }
+
   window.__nativeDownload = {
     start: function (url) {
       const d = nativeDownloads[url];
@@ -265,6 +383,13 @@
       // 图片任务失败先换备用通道重试一次:重试行以备用地址为新键,
       // 原行移除,任务列表里表现为同一张图继续下
       if (!ok && tryImageFallback(url)) {
+        delete dlTasks[url];
+        renderTasks();
+        return;
+      }
+      // 视频/音频:主通道(抖音=CDN 直链)失败时换另一条(代理)重下一次。
+      // 同一套契约:重试行以备用地址为键注册,文件名不变,只重试一次。
+      if (!ok && tryMediaFallback(url)) {
         delete dlTasks[url];
         renderTasks();
         return;
@@ -338,6 +463,11 @@
         // progress events; survives closing this sheet).
         dlTasks[url] = { name: filename, state: 'running', cur: 0, total: -1 };
         renderTasks();
+        // 主通道失败时自动换另一条(抖音:直链→代理)重下一次
+        const fallback = pickFallbackUrl(data, kind);
+        if (hasSrc(fallback)) {
+          mediaFallbacks[url] = { url: fallback, name: filename };
+        }
         AppBridge.download(url, filename);
         App.showToast(kind === 'video' ? '已开始下载视频' : '已开始下载音频');
         // The sheet is now dismissible at no cost: the task bar keeps
